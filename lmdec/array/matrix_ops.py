@@ -67,12 +67,12 @@ def subspace_to_SVD(x: ArrayType,
     """
     flog = {}
     sub_log = max(log - 1, 0)
-
     U, S, V = tsqr(x, compute_svd=True)
 
     if full_v:
         dot_log = {'start': time.time()}
         x_t = a.T.dot(U)
+
         V, _, _ = tsqr(x_t, compute_svd=True)
         V = V.T
         dot_log['end'] = time.time()
@@ -85,8 +85,8 @@ def subspace_to_SVD(x: ArrayType,
     if k:
         U, S, V = svd_to_trunc_svd(U, S, V, k=k)
 
-    U = U.rechunk()
-    V = V.rechunk()
+    # U = U.rechunk({0: 'auto', 1: -1})
+    # V = V.rechunk({0: 'auto', 1: -1})
 
     if log:
         return U, S, V, flog

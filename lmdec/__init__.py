@@ -1,3 +1,2 @@
-from .array import *
-from .decomp import *
+from .decomp import PowerMethod, SuccessiveBatchedPowerMethod
 

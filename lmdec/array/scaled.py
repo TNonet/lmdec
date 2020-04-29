@@ -339,6 +339,7 @@ class ScaledArray:
         self._array = da.array(a)
 
         self._array_moment = ArrayMoment(self._array, self.batch_calc)
+
         self._array_moment.fit()
 
         if x is not None:
@@ -489,6 +490,9 @@ class ScaledArray:
         if self.scale:
             new_array = diag_dot(self.scale_vector, new_array.T).T
 
+        if isinstance(new_array._meta, np.ma.core.MaskedArray):
+            new_array = da.ma.filled(new_array)
+
         if self._t_flag:
             # These are explicitly switched due the
             return new_array.T
@@ -541,6 +545,7 @@ class ScaledArray:
 
         if self._t_flag and self.scale:
             y = self._scale_x(y, sym=False)
+
         return y
 
     @property

@@ -14,7 +14,7 @@ def test_v_init():
     U, S, V = da.linalg.svd(a)
 
     np.testing.assert_almost_equal(subspace_dist(U, v_init(a, V), S), 0)
-    np.testing.assert_almost_equal(subspace_dist(U, v_init(a, V, S), S), 0)
+    np.testing.assert_almost_equal(subspace_dist(U, v_init(a, V), S), 0)
 
 
 def test_sub_svd_init():
