@@ -19,6 +19,7 @@ from lmdec.decomp.init_methods import sub_svd_init, rnormal_start
 from lmdec.array.metrics import q_value_converge, subspace_dist, rmse_k
 from lmdec.array.random import array_constant_partition, cumulative_partition
 from lmdec.array.types import ArrayType, LargeArrayType
+from lmdec.array.wrappers.recover_iter import recover_last_value
 
 
 class _IterAlgo(metaclass=ABCMeta):
@@ -103,11 +104,13 @@ class _IterAlgo(metaclass=ABCMeta):
         self.history = None
         self.num_iter = None
         self.scaled_array = None
+        self.last_value = None
 
     def _reset_history(self):
         self.history = {'times': {'start': None, 'stop': None, 'iter': [], 'step': [], 'acc': []},
                         'acc': {'q-vals': [], 'rmse': [], 'v-subspace': []},
                         'iter': {'U': [], 'S': [], 'V': []}}
+        self.last_value = None
 
     @property
     def scale(self):
@@ -246,6 +249,7 @@ class _IterAlgo(metaclass=ABCMeta):
 
         return array
 
+    @recover_last_value
     def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
             bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
             fam: Optional[Union[str, Path]] = None, **kwargs):
@@ -459,9 +463,9 @@ class PowerMethod(_IterAlgo):
                          time_limit=time_limit)
 
         if int(k) <= 0:
-            raise ValueError('k must be a postitive integer')
-        if int(buffer) <= 0:
-            raise ValueError('buffer must be a positive integer')
+            raise ValueError('k must be a positive integer')
+        if int(buffer) < 0:
+            raise ValueError('buffer must be a non-negative integer')
         self.k = int(k)
         self.buffer = int(buffer)
         self.lmbd = lmbd
@@ -476,9 +480,9 @@ class PowerMethod(_IterAlgo):
     def _initialization(self, data, **kwargs):
         vec_t = self.k + self.buffer
 
-        if vec_t >= min(data.shape):
+        if vec_t > min(data.shape):
             raise ValueError('Cannot find more than min(n,p) singular values of array function.'
-                             'Currently k = {}, buffer = {}. k + b >= min(n,p)'.format(self.k, self.buffer))
+                             'Currently k = {}, buffer = {}. k + b > min(n,p)'.format(self.k, self.buffer))
 
         if not isinstance(data, ScaledArray):
             self.scaled_array = ScaledArray(scale=self._scale, center=self._center, factor=self._factor)
@@ -612,13 +616,17 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
         self.f = f
         self.history = None
         self.lmbd = lmbd
+        self.sub_svds = None
 
     def _reset_history(self):
         self.history = {}
         self.history['acc'] = []
         self.history['iter'] = {'S': [], 'V': []}
         self.history['times'] = {'start': None, 'stop': None, 'iter': []}
+        self.sub_svds = []
+        self.last_value = None
 
+    @recover_last_value
     def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
             bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
             fam: Optional[Union[str, Path]] = None, **kwargs):
@@ -655,6 +663,8 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
                                 scoring_method=self.scoring_method, tol=self.tol)
 
             x = _PM.svd(self.scaled_array[part, :], **{'mask_nan': False, 'transpose': False})
+            self.last_value = _PM.last_value
+            self.sub_svds.append(self.last_value)
 
             if self.lmbd:
                 c_norms = np.linalg.norm(x, 2, axis=0)
@@ -662,7 +672,6 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
                 x += (self.lmbd*c_norms/np.sqrt(x.shape[0])) * da.random.normal(size=x.shape)
 
             if 'v-subspace' in self.scoring_method:
-
                 self.history['iter']['V'].append(_PM.history['iter']['V'][-1])
 
             self.history['iter']['S'].append(_PM.history['iter']['S'][-1])
