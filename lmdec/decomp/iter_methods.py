@@ -541,7 +541,7 @@ class PowerMethod(_IterAlgo):
         return acc_list
 
     def _finalization(self, x, **kwargs):
-        return subspace_to_SVD(x, self.scaled_array, sqrt_s=True, k=self.k, full_v=True, log=0)
+        return self.last_value
 
 
 class _vPowerMethod(PowerMethod):
