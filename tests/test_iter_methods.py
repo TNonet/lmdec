@@ -403,6 +403,32 @@ def test_PowerMethod_persist():
         _, _, _ = PM.svd(x, persist=True, dtype=dt)
 
 
+def test_PowerMethod_std_method():
+    N = 1000
+    k = 10
+
+    for method in ['normal', 'binom']:
+        x = da.random.randint(0, 3, size=(N, N))
+        PM = PowerMethod(k=k, std_method=method, scoring_method='q-vals', tol=1e-12, factor=None)
+        U_PM, S_PM, V_PM = PM.svd(array=x)
+
+        mean = x.mean(axis=0)
+        if method == 'normal':
+            std = x.std(axis=0)
+        else:
+            p = mean/2
+            std = da.sqrt(2*p*(1-p))
+
+        x = x - mean
+        x = x / std
+
+        U, S, V = da.linalg.svd(x)
+        U_k, S_k, V_k = svd_to_trunc_svd(U, S, V, k=k)
+        np.testing.assert_almost_equal(subspace_dist(U_PM, U_k, S_k), 0, decimal=3)
+        np.testing.assert_almost_equal(subspace_dist(V_PM, V_k, S_k), 0, decimal=3)
+        np.testing.assert_array_almost_equal(S_k, S_PM, decimal=2)
+
+
 def test_SSPM_case1():
     N, P, k = 100000, 100, 10
     array = np.zeros(shape=(N, P))

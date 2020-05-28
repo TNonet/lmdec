@@ -32,9 +32,12 @@ class ArrayMoment:
     """Helper Class for storing, calculating, and interpolating column means and standard deviations
     """
 
-    def __init__(self, a):
+    def __init__(self, a, std_dist='normal'):
         self._array = a
 
+        if std_dist not in ['binom', 'normal']:
+            raise ValueError(f"std_dist must be either `binom` or `normal`")
+        self._std_dist = std_dist
         # Values
         self._axis = 0
         self._std_tol = 1e-6
@@ -106,8 +109,12 @@ class ArrayMoment:
         None
         """
         self._center_vector = self._array.mean(axis=self._axis)
-        self._scale_vector = self._std_inverter(self._array.std(axis=self._axis))
-        self._sym_scale_vector = self._scale_vector**2
+        if self._std_dist == 'normal':
+            self._scale_vector = self._std_inverter(self._array.std(axis=self._axis))
+        else:
+            p = self._center_vector / 2
+            self._scale_vector = self._std_inverter(da.sqrt(2 * p * (1 - p)))
+        self._sym_scale_vector = self._scale_vector ** 2
 
     @property
     def center_vector(self):
@@ -196,13 +203,20 @@ class ScaledArray:
         Therefore, AA' is a {n \times n}
     """
 
-    def __init__(self, scale: bool = True, center: bool = True, factor: Optional[str] = None):
+    def __init__(self, scale: bool = True, center: bool = True, factor: Optional[str] = None,
+                 std_dist: Optional[str] = None):
         self.scale = scale
         self.center = center
         if factor not in [None, 'n', 'p']:
             raise ValueError('factor, {}, must be in [None, "n", "p"]'.format(factor))
         else:
             self.factor = factor
+        if std_dist not in [None, 'normal', 'binom']:
+            raise ValueError(f"std_dist must be in [None, 'normal', 'binom']")
+        elif std_dist is None:
+            std_dist = 'normal'
+
+        self._std_dist = std_dist
         self._axis = 0
         self._std_tol = 1e-6
         self._array = None
@@ -237,7 +251,7 @@ class ScaledArray:
 
         self._array = da.array(a)
 
-        self._array_moment = ArrayMoment(self._array)
+        self._array_moment = ArrayMoment(self._array, std_dist=self._std_dist)
 
         self._array_moment.fit()
 

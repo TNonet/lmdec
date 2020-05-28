@@ -420,17 +420,35 @@ def test__getitem_T_subset_chunks():
     np.testing.assert_array_equal(sa[0:50, 0:40].T[0:20, 0:30].chunks, a[0:50, 0:40].T[0:20, 0:30].chunks)
 
 
-def gen_sets():
-    num_sets = np.random.randint(2, 10)
-    sets = []
-    for i in range(num_sets):
-        set_size = np.random.randint(1, 10)
-        sub_set = np.random.rand(set_size)
-        sets.append(sub_set)
+def test_ScaledArray_std_method():
+    for method in [None, 'normal']:
+        array = np.random.randint(0, 3, size=(10, 20))
+        sa = ScaledArray(std_dist=method)
+        sa.fit(array)
 
-    combined_set = [item for sublist in sets for item in sublist]
+        np.testing.assert_almost_equal(sa.scale_vector, 1/array.std(axis=0))
 
-    return sets, combined_set
+    sa = ScaledArray(std_dist='binom')
+    sa.fit(array)
+    p = array.mean(axis=0) / 2
+    np.testing.assert_almost_equal(sa.scale_vector, 1/np.sqrt(2*p*(1-p)))
+
+
+def test_array_moment_std_method():
+    array = np.random.randint(0, 3, size=(10, 20))
+
+    a = ArrayMoment(array, std_dist='binom')
+    a.fit()
+    p = array.mean(axis=0)/2
+    np.testing.assert_almost_equal(a.scale_vector, 1/np.sqrt(2*p*(1-p)))
+
+    a = ArrayMoment(array, std_dist='normal')
+    a.fit()
+    np.testing.assert_almost_equal(a.scale_vector, 1/array.std(axis=0))
+
+    a = ArrayMoment(array)
+    a.fit()
+    np.testing.assert_almost_equal(a.scale_vector, 1/array.std(axis=0))
 
 
 def test_array_moment_case1():

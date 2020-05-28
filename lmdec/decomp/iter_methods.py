@@ -220,7 +220,7 @@ class _IterAlgo(metaclass=ABCMeta):
         if isinstance(array, (ScaledArray, da.core.Array)):
             pass
         elif isinstance(array, np.ndarray):
-            array = da.from_array(array, chunks={0: 'auto', 1: -1})
+            array = da.from_array(array, chunks='auto')
 
         if len(array.shape) != 2:
             raise ValueError("Must be a 2-D array")
@@ -363,6 +363,7 @@ class PowerMethod(_IterAlgo):
                  max_iter: int = 50,
                  scale: bool = True,
                  center: bool = True,
+                 std_method: str = 'normal',
                  factor: Optional[str] = 'n',
                  scoring_method='q-vals',
                  tol=.1,
@@ -469,6 +470,7 @@ class PowerMethod(_IterAlgo):
         self.k = int(k)
         self.buffer = int(buffer)
         self.lmbd = lmbd
+        self.std_method = std_method
 
         self.sub_svd_start = sub_svd_start
         if init_row_sampling_factor <= 0:
@@ -485,7 +487,8 @@ class PowerMethod(_IterAlgo):
                              'Currently k = {}, buffer = {}. k + b > min(n,p)'.format(self.k, self.buffer))
 
         if not isinstance(data, ScaledArray):
-            self.scaled_array = ScaledArray(scale=self._scale, center=self._center, factor=self._factor)
+            self.scaled_array = ScaledArray(scale=self._scale, center=self._center, factor=self._factor,
+                                            std_dist=self.std_method)
             self.scaled_array.fit(data)
         else:
             self.scaled_array = data
@@ -556,7 +559,7 @@ class PowerMethod(_IterAlgo):
 
 class _vPowerMethod(PowerMethod):
 
-    def __init__(self, v_start: ArrayType, k=None, buffer=None, max_iter=None, scoring_method=None, p=None, tol=None,
+    def __init__(self, v_start: ArrayType, k=None, buffer=None, max_iter=None, scoring_method=None, tol=None,
                  full_svd: bool = False):
         super().__init__(max_iter=max_iter,
                          scoring_method=scoring_method,
@@ -612,6 +615,7 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
                  scale: bool = True,
                  center: bool = True,
                  factor: Optional[str] = 'n',
+                 std_method : str = 'normal',
                  scoring_method='q-vals',
                  f=.1,
                  lmbd=.1,
@@ -622,7 +626,8 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
                  max_sub_time=1000):
         super().__init__(k=k, max_iter=max_sub_iter, scale=scale, center=center, factor=factor,
                          scoring_method=scoring_method, tol=tol, buffer=buffer, sub_svd_start=sub_svd_start,
-                         init_row_sampling_factor=init_row_sampling_factor, time_limit=max_sub_time)
+                         init_row_sampling_factor=init_row_sampling_factor, time_limit=max_sub_time,
+                         std_method=std_method)
         self.f = f
         self.history = None
         self.lmbd = lmbd
