@@ -253,19 +253,24 @@ def test_PowerMethod_buffer():
     with pytest.raises(ValueError):
         _ = PowerMethod(buffer=-1)
 
-    PM1 = PowerMethod(buffer=10, max_iter=2, tol=1e-12, scoring_method='rmse')
-    PM2 = PowerMethod(buffer=30, max_iter=2, tol=1e-12, scoring_method='rmse')
+    for method in ['q-vals', 'rmse', 'v-subspace']:
+        PM1 = PowerMethod(buffer=10, max_iter=5, tol=1e-12, scoring_method=method)
+        PM2 = PowerMethod(buffer=30, max_iter=5, tol=1e-12, scoring_method=method)
 
-    array = np.random.rand(1000, 1000)
-    U, S, V = np.linalg.svd(array)
-    S[0:15] = 1e3+S[0:15]
+        array = np.random.rand(1000, 1000)
+        U, S, V = np.linalg.svd(array)
+        S[0:15] = 1e3+S[0:15]
 
-    array = U.dot(np.diag(S).dot(V))
+        array = U.dot(np.diag(S).dot(V))
 
-    _, _, _ = PM1.svd(array)
-    _, _, _ = PM2.svd(array)
+        _, _, _ = PM1.svd(array)
+        _, _, _ = PM2.svd(array)
 
-    assert PM1.history['acc']['rmse'][-1] > PM2.history['acc']['rmse'][-1]
+        if method == 'v-subspace':
+            # V-Subspace for this convergese quickly due small size of test case
+            assert np.abs(PM1.history['acc'][method][-1] - PM2.history['acc'][method][-1]) < 1e-6
+        else:
+            assert PM1.history['acc'][method][-1] > PM2.history['acc'][method][-1]
 
 
 def test_PowerMethod_sub_svd_start():

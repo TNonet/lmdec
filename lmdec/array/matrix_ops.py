@@ -66,18 +66,10 @@ def subspace_to_SVD(x: ArrayType,
         If full_v is false right singular vectors will be in (k, k)
     """
     flog = {}
-    sub_log = max(log - 1, 0)
     U, S, V = tsqr(x, compute_svd=True)
 
     if full_v:
-        dot_log = {'start': time.time()}
-        x_t = a.T.dot(U)
-
-        V, _, _ = tsqr(x_t, compute_svd=True)
-        V = V.T
-        dot_log['end'] = time.time()
-        if sub_log:
-            flog['dot'] = dot_log
+        V = subspace_to_V(x, a, k)
 
     if sqrt_s:
         S = np.sqrt(S)
@@ -92,6 +84,20 @@ def subspace_to_SVD(x: ArrayType,
         return U, S, V, flog
     else:
         return U, S, V
+
+
+def subspace_to_V(x: ArrayType,
+                  a: Optional["ScaledArray"] = None,
+                  k: Optional[int] = None) -> ArrayType:
+
+    x_t = a.T.dot(x)
+    V, _, _ = tsqr(x_t, compute_svd=True)
+    V = V.T
+
+    if k:
+        V = svd_to_trunc_svd(v=V, k=k)
+    return V
+
 
 
 def svd_to_trunc_svd(u: Optional[ArrayType] = None,

@@ -2,10 +2,10 @@ import pytest
 import numpy as np
 import dask.array as da
 
-from lmdec.array.matrix_ops import diag_dot, subspace_to_SVD
+from lmdec.array.matrix_ops import diag_dot, subspace_to_SVD, subspace_to_V
 from lmdec.array.metrics import subspace_dist
 
-decimals = 6
+decimals = 5
 num_runs = 10
 
 
@@ -130,3 +130,13 @@ def test_subspace_to_SVD_case3():
                     subspace = subspace_shuffle[:, 0:j]
                     U_s, S_s, V_s = subspace_to_SVD(subspace, A, full_v=True)
                     np.testing.assert_almost_equal(subspace_dist(V_s, V, S_s), 0, decimal=decimals)
+
+
+def test_subspace_to_V_case1():
+    for N in range(2, 10):
+        for P in range(2, 10):
+            A = da.random.random(size=(N, P))
+            U, S, V1 = da.linalg.svd(A)
+            V2 = subspace_to_V(U, A, k=min(N, P))
+
+            np.testing.assert_almost_equal(subspace_dist(V1, V2, S), 0, decimal=decimals)

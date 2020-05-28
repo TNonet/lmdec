@@ -13,7 +13,7 @@ import time
 from pandas_plink import read_plink1_bin, read_plink
 from pathlib import Path
 
-from lmdec.array.matrix_ops import subspace_to_SVD
+from lmdec.array.matrix_ops import subspace_to_SVD, subspace_to_V
 from lmdec.array.scaled import ScaledArray
 from lmdec.decomp.init_methods import sub_svd_init, rnormal_start
 from lmdec.array.metrics import q_value_converge, subspace_dist, rmse_k
@@ -504,7 +504,7 @@ class PowerMethod(_IterAlgo):
             x = rnormal_start(self.scaled_array, vec_t, log=0)
 
         self.scaled_array.fit_x(x)
-        return x
+        return x.persist()
 
     def _solution_step(self, x, **kwargs):
         q, _ = tsqr(x)
@@ -515,9 +515,13 @@ class PowerMethod(_IterAlgo):
         pass
 
     def _solution_accuracy(self, x, **kwargs):
-        U_k, S_k, V_k = subspace_to_SVD(x, self.scaled_array, sqrt_s=True, k=self.k, full_v=True, log=0)
+        if any(m in self.scoring_method for m in ['rmse', 'v-subspace']):
+            U_k, S_k, V_k = subspace_to_SVD(x, self.scaled_array, sqrt_s=True, k=self.k, full_v=True, log=0)
+        else:
+            U_k, S_k, V_k = subspace_to_SVD(x, self.scaled_array, sqrt_s=True, k=self.k, full_v=False, log=0)
 
         U_k, S_k, V_k = dask.persist(U_k, S_k, V_k)
+
         self.last_value = (U_k, S_k, V_k)
         acc_list = []
         for method in self.scoring_method:
@@ -541,7 +545,13 @@ class PowerMethod(_IterAlgo):
         return acc_list
 
     def _finalization(self, x, **kwargs):
-        return self.last_value
+        if self.last_value[2].shape[1] == self.scaled_array.shape[1]:
+            # If V from last_value is calculated with full_v.
+            return self.last_value
+        else:
+            U, S, _ = self.last_value
+            V = subspace_to_V(x, self.scaled_array, self.k).persist()
+            return U, S, V
 
 
 class _vPowerMethod(PowerMethod):
@@ -580,7 +590,7 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
     If we have reason to believe that that rows of A are generated from an underlying distribution, then a subset of the
     rows of A may be sufficient to find a high quality singular value decomposition of A
 
-    In otherwords, it would be reasonable to assume that with just n' < n rows of A we can accurately learn the same
+    In other words, it would be reasonable to assume that with just n' < n rows of A we can accurately learn the same
     factors that we would learn with all n rows.
 
     Algorithm:
