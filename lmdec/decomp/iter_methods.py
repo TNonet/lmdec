@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from collections import namedtuple
 
 from typing import Union, List, Optional, Tuple
 
@@ -20,6 +21,9 @@ from lmdec.array.metrics import q_value_converge, subspace_dist, rmse_k
 from lmdec.array.random import array_constant_partition, cumulative_partition
 from lmdec.array.types import ArrayType, LargeArrayType
 from lmdec.array.wrappers.recover_iter import recover_last_value
+
+
+PowerMethodSummary = namedtuple('PowerMethodSummary', ['time', 'acc', 'iter'])
 
 
 class _IterAlgo(metaclass=ABCMeta):
@@ -104,13 +108,13 @@ class _IterAlgo(metaclass=ABCMeta):
         self.history = None
         self.num_iter = None
         self.scaled_array = None
-        self.last_value = None
 
     def _reset_history(self):
-        self.history = {'times': {'start': None, 'stop': None, 'iter': [], 'step': [], 'acc': []},
-                        'acc': {'q-vals': [], 'rmse': [], 'v-subspace': []},
-                        'iter': {'U': [], 'S': [], 'V': []}}
-        self.last_value = None
+        summary = PowerMethodSummary(time={'start': None, 'stop': None, 'iter': [], 'step': [], 'acc': []},
+                                     acc={'q-vals': [], 'rmse': [], 'v-subspace': []},
+                                     iter={'U': [], 'S': [], 'V': [], 'last_value': []})
+
+        self.history = summary
 
     @property
     def scale(self):
@@ -126,7 +130,7 @@ class _IterAlgo(metaclass=ABCMeta):
 
     @property
     def time(self):
-        return self.history['times']['stop'] - self.history['times']['start']
+        return self.history.time['stop'] - self.history.time['start']
 
     @abstractmethod
     def _initialization(self, data, **kwargs):
@@ -311,7 +315,7 @@ class _IterAlgo(metaclass=ABCMeta):
 
         self._reset_history()
 
-        self.history['times']['start'] = time.time()
+        self.history.time['start'] = time.time()
 
         data = self.get_array(array, path_to_files, bed, bim, fam, **kwargs)
 
@@ -322,10 +326,10 @@ class _IterAlgo(metaclass=ABCMeta):
             self.num_iter = i
             iter_start = time.time()
             acc_list = self._solution_accuracy(x_k, **kwargs)
-            self.history['times']['acc'].append(time.time() - iter_start)
+            self.history.time['acc'].append(time.time() - iter_start)
 
             for method, acc, tol in zip(self.scoring_method, acc_list, self.tol):
-                self.history['acc'][method].append(acc)
+                self.history.acc[method].append(acc)
                 if acc <= tol:
                     converged = True
 
@@ -336,17 +340,17 @@ class _IterAlgo(metaclass=ABCMeta):
 
             step_start = time.time()
             x_k = self._solution_step(x_k, **kwargs)
-            self.history['times']['step'].append(time.time() - step_start)
+            self.history.time['step'].append(time.time() - step_start)
 
             iter_end = time.time()
-            self.history['times']['iter'].append(iter_end - iter_start)
+            self.history.time['iter'].append(iter_end - iter_start)
 
-            if time.time() - self.history['times']['start'] > self.time_limit:
+            if time.time() - self.history.time['start'] > self.time_limit:
                 break
 
         result = self._finalization(x_k, **kwargs)
 
-        self.history['times']['stop'] = time.time()
+        self.history.time['stop'] = time.time()
 
         if not converged:
             warnings.warn("Did not converge. \n"
@@ -477,7 +481,6 @@ class PowerMethod(_IterAlgo):
             raise ValueError('init_row_sampling_factor must be a positive value')
         self.init_row_sampling_factor = init_row_sampling_factor
         self.compute = True
-        self.last_value = None
 
     def _initialization(self, data, **kwargs):
         vec_t = self.k + self.buffer
@@ -525,34 +528,34 @@ class PowerMethod(_IterAlgo):
 
         U_k, S_k, V_k = dask.persist(U_k, S_k, V_k)
 
-        self.last_value = (U_k, S_k, V_k)
+        self.history.iter['last_value'] = (U_k, S_k, V_k)
         acc_list = []
         for method in self.scoring_method:
             if method == 'q-vals':
                 try:
-                    prev_S_k = self.history['iter']['S'][-1]
+                    prev_S_k = self.history.iter['S'][-1]
                     acc = q_value_converge(S_k, prev_S_k)
                 except IndexError:
                     acc = float('INF')
-                self.history['iter']['S'].append(S_k.compute())
+                self.history.iter['S'].append(S_k.compute())
             elif method == 'rmse':
                 acc = rmse_k(self.scaled_array, U_k, S_k ** 2)
             else:  # method == 'v-subspace'
                 try:
-                    prev_V_k = self.history['iter']['V'][-1]
+                    prev_V_k = self.history.iter['V'][-1]
                     acc = subspace_dist(V_k.T, prev_V_k.T, S_k)
                 except IndexError:
                     acc = float('INF')
-                self.history['iter']['V'].append(V_k.compute())
+                self.history.iter['V'].append(V_k.compute())
             acc_list.append(acc)
         return acc_list
 
     def _finalization(self, x, **kwargs):
-        if self.last_value[2].shape[1] == self.scaled_array.shape[1]:
+        if self.history.iter['last_value'][2].shape[1] == self.scaled_array.shape[1]:
             # If V from last_value is calculated with full_v.
-            return self.last_value
+            return self.history.iter['last_value']
         else:
-            U, S, _ = self.last_value
+            U, S, _ = self.history.iter['last_value']
             V = subspace_to_V(x, self.scaled_array, self.k).persist()
             return U, S, V
 
@@ -634,12 +637,9 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
         self.sub_svds = None
 
     def _reset_history(self):
-        self.history = {}
-        self.history['acc'] = []
-        self.history['iter'] = {'S': [], 'V': []}
-        self.history['times'] = {'start': None, 'stop': None, 'iter': []}
-        self.sub_svds = []
-        self.last_value = None
+        super()._reset_history()
+        self.history.acc['sub_svd_acc'] = []
+        self.history.iter['sub_svd'] = []
 
     @recover_last_value
     def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
@@ -647,7 +647,7 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
             fam: Optional[Union[str, Path]] = None, **kwargs):
 
         self._reset_history()
-        self.history['times']['start'] = time.time()
+        self.history.time['start'] = time.time()
 
         array = self.get_array(array, path_to_files, bed, bim, fam, **kwargs)
 
@@ -678,8 +678,8 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
                                 scoring_method=self.scoring_method, tol=self.tol)
 
             x = _PM.svd(self.scaled_array[part, :], **{'mask_nan': False, 'transpose': False})
-            self.last_value = _PM.last_value
-            self.sub_svds.append(self.last_value)
+            self.history.iter['last_value'] = _PM.history.iter['last_value']
+            self.history.iter['sub_svd'].append(self.history.iter['last_value'])
 
             if self.lmbd:
                 c_norms = np.linalg.norm(x, 2, axis=0)
@@ -687,11 +687,11 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
                 x += (self.lmbd*c_norms/np.sqrt(x.shape[0])) * da.random.normal(size=x.shape)
 
             if 'v-subspace' in self.scoring_method:
-                self.history['iter']['V'].append(_PM.history['iter']['V'][-1])
+                self.history.iter['V'].append(_PM.history.iter['V'][-1])
 
-            self.history['iter']['S'].append(_PM.history['iter']['S'][-1])
-            self.history['acc'].append(_PM.history['acc'])
-            self.history['times']['iter'].append(_PM.history['times'])
+            self.history.iter['S'].append(_PM.history.iter['S'][-1])
+            self.history.acc['sub_svd_acc'].append(_PM.history.acc)
+            self.history.time['iter'].append(_PM.history.time)
 
         _PM = _vPowerMethod(v_start=x, k=self.k, buffer=self.buffer, max_iter=self.max_iter,
                             scoring_method=self.scoring_method, tol=self.tol, full_svd=True)

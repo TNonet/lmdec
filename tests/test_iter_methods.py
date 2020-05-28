@@ -187,9 +187,9 @@ def test_PowerMethod_multi_tol():
 
         _, _, _ = PM.svd(array)
 
-        assert (min(PM.history['acc']['q-vals']) <= tols[0]
-                or min(PM.history['acc']['rmse']) <= tols[1]
-                or min(PM.history['acc']['v-subspace']) <= tols[2])
+        assert (min(PM.history.acc['q-vals']) <= tols[0]
+                or min(PM.history.acc['rmse']) <= tols[1]
+                or min(PM.history.acc['v-subspace']) <= tols[2])
 
     fail_test_tols = [1e-6, 1e-16, 1e-16]
 
@@ -197,9 +197,9 @@ def test_PowerMethod_multi_tol():
 
     _, _, _ = PM.svd(array)
 
-    assert (min(PM.history['acc']['q-vals']) <= fail_test_tols[0]
-            and min(PM.history['acc']['rmse']) >= fail_test_tols[1]
-            and min(PM.history['acc']['v-subspace']) >= fail_test_tols[2])
+    assert (min(PM.history.acc['q-vals']) <= fail_test_tols[0]
+            and min(PM.history.acc['rmse']) >= fail_test_tols[1]
+            and min(PM.history.acc['v-subspace']) >= fail_test_tols[2])
 
 
 def test_PowerMethod_k():
@@ -225,7 +225,7 @@ def test_PowerMethod_max_iter():
     _, _, _ = PM.svd(array)
 
     assert PM.num_iter == 1
-    assert len(PM.history['iter']['S']) == 1
+    assert len(PM.history.iter['S']) == 1
 
 
 def test_PowerMethod_time_limit():
@@ -268,9 +268,9 @@ def test_PowerMethod_buffer():
 
         if method == 'v-subspace':
             # V-Subspace for this convergese quickly due small size of test case
-            assert np.abs(PM1.history['acc'][method][-1] - PM2.history['acc'][method][-1]) < 1e-6
+            assert np.abs(PM1.history.acc[method][-1] - PM2.history.acc[method][-1]) < 1e-6
         else:
-            assert PM1.history['acc'][method][-1] > PM2.history['acc'][method][-1]
+            assert PM1.history.acc[method][-1] > PM2.history.acc[method][-1]
 
 
 def test_PowerMethod_sub_svd_start():
@@ -451,7 +451,7 @@ def test_SSPM_case1():
     np.testing.assert_almost_equal(subspace_dist(V_PM, V_k, S_k), 0)
     np.testing.assert_array_almost_equal(S_k, S_PM)
 
-    for sub_S in SSPM.history['iter']['S'][:-1]:
+    for sub_S in SSPM.history.iter['S'][:-1]:
         np.testing.assert_array_almost_equal(s_orig[::-1][:k], sub_S)
 
 
@@ -470,7 +470,7 @@ def test_SSPM_case2():
 
     _, _, _ = SSPM.svd(array)
 
-    for sub_S in SSPM.history['iter']['S']:
+    for sub_S in SSPM.history.iter['S']:
         np.testing.assert_array_almost_equal(s_orig[:k], sub_S)
 
 
@@ -493,7 +493,7 @@ def test_SSPM_case3():
 
     np.testing.assert_array_almost_equal(s_orig[-k:][::-1], S_PM)
 
-    for i, (sub_S, sub_V) in enumerate(zip(SSPM.history['iter']['S'], SSPM.history['iter']['V'])):
+    for i, (sub_S, sub_V) in enumerate(zip(SSPM.history.iter['S'], SSPM.history.iter['V'])):
         s = sorted(s_orig[:int(f*(i+1)*N)], reverse=True)[:k]
         np.testing.assert_array_almost_equal(s, sub_S)
 
