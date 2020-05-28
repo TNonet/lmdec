@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 import dask.array as da
-from lmdec.array.scaled import ScaledArray, combine_means, combine_stds, ArrayMoment
+from lmdec.array.scaled import ScaledArray, ArrayMoment
 from lmdec.array.random import array_constant_partition
 
 num_run = 10
@@ -433,36 +433,6 @@ def gen_sets():
     return sets, combined_set
 
 
-def test_combine_stds():
-    for _ in range(num_run):
-        sets, combined_set = gen_sets()
-
-        std = np.std(combined_set)
-
-        set_len = [len(sub_set) for sub_set in sets]
-        sets_mean = [np.mean(sub_set) for sub_set in sets]
-        sets_std = [np.std(sub_set) for sub_set in sets]
-
-        itr = list(zip(set_len, sets_mean, sets_std))
-        combined_std = combine_stds(itr)
-        np.testing.assert_almost_equal(combined_std, std)
-
-
-def test_combnine_means():
-    for _ in range(num_run):
-        sets, combined_set = gen_sets()
-
-        sets_info = []
-        for set in sets:
-            sets_info.append((len(set), np.mean(set)))
-
-        mean = np.mean(combined_set)
-
-        combined_mean = combine_means(sets_info)
-
-        np.testing.assert_almost_equal(mean, combined_mean)
-
-
 def test_array_moment_case1():
     for N in range(2, 5):
         for P in range(2, 5):
@@ -474,7 +444,7 @@ def test_array_moment_case1():
                     for vector_type in [da.array, np.array]:
                         temp_vector = vector_type(vector)
                         for fit_x in [temp_vector, None]:
-                            a = ArrayMoment(temp_array, batch_calc=None)
+                            a = ArrayMoment(temp_array)
                             a.fit()
                             if fit_x is not None:
                                 a.fit_x(fit_x)
@@ -500,7 +470,7 @@ def test_sub_array_moments_no_batch_calc():
         for P in range(3, 5):
             array = np.random.rand(N, P)
 
-            a = ArrayMoment(array, None)
+            a = ArrayMoment(array)
 
             for sub_N in range(2, N):
                 for sub_P in range(2, P):
@@ -508,23 +478,3 @@ def test_sub_array_moments_no_batch_calc():
                     np.testing.assert_almost_equal(a[0:sub_N, 0:sub_P].sym_scale_vector, 1/sub_array.std(axis=0)**2)
                     np.testing.assert_almost_equal(a[0:sub_N, 0:sub_P].scale_vector, 1/sub_array.std(axis=0))
                     np.testing.assert_almost_equal(a[0:sub_N, 0:sub_P].center_vector, sub_array.mean(axis=0))
-
-
-def test_sub_array_moments_use_batch_calc():
-
-    array = np.random.rand(10, 10)
-
-    batches = array_constant_partition(array.shape, f= .2, min_size = 2)
-
-    a = ArrayMoment(array, batches)
-
-    for i in range(5):
-        for j in range(i):
-            sub_batches = batches[i:j]
-            np.testing.assert_array_almost_equal(a[sub_batches, :].center_vector,
-                                                 array[sub_batches, :].mean(axis=0))
-            np.testing.assert_array_almost_equal(a[sub_batches, :].scale_vector,
-                                                 1/array[sub_batches, :].std(axis=0))
-            np.testing.assert_array_almost_equal(a[sub_batches, :].sym_scale_vector,
-                                                 1/array[sub_batches, :].std(axis=0)**2)
-

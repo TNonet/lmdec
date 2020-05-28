@@ -1,5 +1,5 @@
 import warnings
-from typing import Optional, Union, List, Tuple, Iterable
+from typing import Optional, Union
 from functools import wraps
 
 from copy import copy
@@ -28,75 +28,18 @@ def reshape_degenerate_2d_array(f):
     return wrapped
 
 
-def combine_stds(itr: Iterable[Tuple[int, float, float]]):
-    """Combines sample size, sample mean, sample std of N sets into one std
-
-    Parameters
-    ----------
-    itr : Variable length list of 3-tuples
-         [(sample size 1, sample mean 1, sample std 1),
-          (sample size 2, sample mean 2, sample std 2),
-          (     ....    ,      ....    ,     ...     ),
-          (sample size N, sample mean N, sample std N)]
-
-    Returns
-    -------
-    std : float
-        combined std of N sets
-    """
-    copy_itr = tuple(itr)
-    set_mu = combine_means(copy_itr)
-
-    sum_weight_std = 0
-    sum_sample_size = 0
-    for n, mu, std in copy_itr:
-        sum_weight_std += n*(std**2 + (mu - set_mu)**2)
-        sum_sample_size += n
-
-    return np.sqrt(sum_weight_std/sum_sample_size)
-
-
-def combine_means(itr: Iterable[Union[Tuple[int, float], Tuple[int, float, float]]]) -> float:
-    """Combines sample size, sample mean, of N sets into mean of all N sets
-
-    Parameters
-    ----------
-    itr : Variable length list of 2-tuples
-        [(sample size 1, sample mean 1),
-         (sample size 2, sample mean 2),
-         (     ....    ,      ....    ),
-         (sample size N, sample mean N)]
-
-    Returns
-    -------
-    u : float
-        combined mean of N sets
-    """
-    sum_sample_size = 0
-    sum_sample_mean = 0
-    for n, mu, *_ in itr:
-        sum_sample_size += n
-        sum_sample_mean += n*mu
-
-    return sum_sample_mean/sum_sample_size
-
-
 class ArrayMoment:
     """Helper Class for storing, calculating, and interpolating column means and standard deviations
     """
 
-    def __init__(self, a, batch_calc):
+    def __init__(self, a):
         self._array = a
-        self._batch_calc = batch_calc
 
         # Values
         self._axis = 0
         self._std_tol = 1e-6
 
         # Caches
-        self._center_batches = None
-        self._scale_batches = None
-        self._size_batches = None
         self._center_vector = None
         self._scale_vector = None
         self._sym_scale_vector = None
@@ -157,46 +100,13 @@ class ArrayMoment:
         return da.array(1 / std)
 
     def fit(self) -> None:
-        """Uses batch_calc to compute mean and std
-
-        Let Ai =  A[batch_calc[i] :]
-
-        Then A = [A1'; A2'; A3'; ... AN']'
-
-        Then;
-            u_batchs = [ColumnMean(A1), ColumnMean(A2), ... ColumnMean(AN)]
-            s_batchs = [ColumnStd(A1), ColumnStf(A2), ... ColumnStd(AN)]
-
-        center_vector = combine_mean(u_batchs)
-        scale_vector = combine_std(s_batchs)
-
-        We can also find the center/scale_vector of sub batches by using subsections of u/s_batches
-
+        """
         Returns
         -------
         None
         """
-        if self._array is not None:
-            if self._batch_calc is None:
-                self._center_vector = self._array.mean(axis=self._axis)
-                self._scale_vector = self._std_inverter(self._array.std(axis=self._axis))
-                self._sym_scale_vector = self._scale_vector**2
-                return
-            else:
-                self._center_batches = []
-                self._scale_batches = []
-                self._size_batches = []
-                for sub_index in self._batch_calc:
-                    sub_array = self._array[sub_index, :]
-                    num_rows = sub_array.shape[0]
-                    sub_array_mean = sub_array.mean(axis=self._axis)
-                    sub_array_std = sub_array.std(axis=self._axis)
-                    self._center_batches.append(sub_array_mean)
-                    self._scale_batches.append(sub_array_std)
-                    self._size_batches.append(num_rows)
-
-        self._center_vector = combine_means(zip(self._size_batches, self._center_batches))
-        self._scale_vector = combine_stds(zip(self._size_batches, self._center_batches, self._scale_batches))
+        self._center_vector = self._array.mean(axis=self._axis)
+        self._scale_vector = self._std_inverter(self._array.std(axis=self._axis))
         self._sym_scale_vector = self._scale_vector**2
 
     @property
@@ -260,17 +170,8 @@ class ArrayMoment:
         if isinstance(item, tuple) and len(item) > 2:
             raise IndexError("Cannot index with more than two dimensions.")
 
-        try:
-            indx = [i for i in range(len(self._batch_calc)) if self._batch_calc[i] in item]
-            new_array_moment = ArrayMoment(self._array[indx, :], item)
-            new_array_moment._center_batches = self._center_batches[indx]
-            new_array_moment._scale_batches = self._scale_batches[indx]
-            new_array_moment._size_batches = self._size_batches[indx]
-            new_array_moment.fit()
-
-        except (ValueError, TypeError):
-            new_array_moment = ArrayMoment(self._array[item], None)
-            new_array_moment.fit()
+        new_array_moment = ArrayMoment(self._array[item])
+        new_array_moment.fit()
 
         return new_array_moment
 
@@ -295,11 +196,9 @@ class ScaledArray:
         Therefore, AA' is a {n \times n}
     """
 
-    def __init__(self, scale: bool = True, center: bool = True, factor: Optional[str] = None,
-                 batch_calc: Optional[List[slice]] = None):
+    def __init__(self, scale: bool = True, center: bool = True, factor: Optional[str] = None):
         self.scale = scale
         self.center = center
-        self.batch_calc = batch_calc
         if factor not in [None, 'n', 'p']:
             raise ValueError('factor, {}, must be in [None, "n", "p"]'.format(factor))
         else:
@@ -338,7 +237,7 @@ class ScaledArray:
 
         self._array = da.array(a)
 
-        self._array_moment = ArrayMoment(self._array, self.batch_calc)
+        self._array_moment = ArrayMoment(self._array)
 
         self._array_moment.fit()
 
