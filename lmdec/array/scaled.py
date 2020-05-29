@@ -266,7 +266,7 @@ class ScaledArray:
         self._array_moment.fit_x(x)
 
     @reshape_degenerate_2d_array
-    def sym_mat_mult(self, x: Union[da.core.Array, np.ndarray]) -> Union[da.core.Array, np.ndarray]:
+    def sym_mat_mult(self, x: Union[da.core.Array, np.ndarray]) -> da.core.Array:
         """Performs Symmetrical Matrix Multiplication of array and x
 
         Parameters
@@ -425,26 +425,26 @@ class ScaledArray:
         t_scaled_array._t_flag = not self._t_flag
         return t_scaled_array
 
-    def _scale_x(self, x, sym: bool = False) -> Union[da.core.Array, np.ndarray]:
+    def _scale_x(self, x, sym: bool = False) -> da.core.Array:
         try:
             if len(x.shape) == 2 and self._array_moment.vector_width == x.shape[1]:
                 scale_matrix = self._array_moment.sym_scale_matrix if sym else self._array_moment.scale_matrix
-                return np.multiply(scale_matrix, x)
+                return da.multiply(scale_matrix, x)
         except ValueError:
             pass
         scale_vector = self._array_moment.sym_scale_vector if sym else self._array_moment.scale_vector
         x_h = diag_dot(scale_vector, x, return_diag=False)
         return x_h
 
-    def _center_x(self, x, dx, transpose: bool = False) -> Union[da.core.Array, np.ndarray]:
+    def _center_x(self, x, dx, transpose: bool = False) -> da.core.Array:
         if transpose:
             # Computes mu1'x_k_h
-            return x - np.squeeze(np.outer(self._array_moment.center_vector, dx.sum(axis=0)))
+            return x - da.squeeze(da.outer(self._array_moment.center_vector, dx.sum(axis=0)))
         else:
             return x - self._array_moment.center_vector.dot(dx)
 
     @reshape_degenerate_2d_array
-    def dot(self, x: Union[da.core.Array, np.ndarray]) -> Union[da.core.Array, np.ndarray]:
+    def dot(self, x: Union[da.core.Array, np.ndarray]) -> da.core.Array:
         if not self._t_flag and self.scale:
             x = self._scale_x(x, sym=False)
 
