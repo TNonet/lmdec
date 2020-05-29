@@ -32,12 +32,13 @@ class ArrayMoment:
     """Helper Class for storing, calculating, and interpolating column means and standard deviations
     """
 
-    def __init__(self, a, std_dist='normal'):
+    def __init__(self, a, std_dist='normal', warn: bool = True):
         self._array = a
 
         if std_dist not in ['binom', 'normal']:
             raise ValueError(f"std_dist must be either `binom` or `normal`")
         self._std_dist = std_dist
+        self._warn = warn
         # Values
         self._axis = 0
         self._std_tol = 1e-6
@@ -96,8 +97,9 @@ class ArrayMoment:
 
         degenerate_snp_columns = np.where(std <= self._std_tol)
         if len(degenerate_snp_columns[0]) > 0:
-            warnings.warn('SNP Columns {} have low standard deviation.'
-                          ' Setting STD of columns to 1'.format(degenerate_snp_columns))
+            if self._warn:
+                warnings.warn('SNP Columns {} have low standard deviation.'
+                              ' Setting STD of columns to 1'.format(degenerate_snp_columns))
             std[degenerate_snp_columns[0]] = 1
 
         return da.array(1 / std)
@@ -204,7 +206,7 @@ class ScaledArray:
     """
 
     def __init__(self, scale: bool = True, center: bool = True, factor: Optional[str] = None,
-                 std_dist: Optional[str] = None):
+                 std_dist: Optional[str] = None, warn: bool = True):
         self.scale = scale
         self.center = center
         if factor not in [None, 'n', 'p']:
@@ -217,6 +219,7 @@ class ScaledArray:
             std_dist = 'normal'
 
         self._std_dist = std_dist
+        self._warn = warn
         self._axis = 0
         self._std_tol = 1e-6
         self._array = None
@@ -251,7 +254,7 @@ class ScaledArray:
 
         self._array = da.array(a)
 
-        self._array_moment = ArrayMoment(self._array, std_dist=self._std_dist)
+        self._array_moment = ArrayMoment(self._array, std_dist=self._std_dist, warn=self._warn)
 
         self._array_moment.fit()
 
@@ -395,7 +398,7 @@ class ScaledArray:
         B = (A - mu)D
         """
         n, p = self.shape
-        if n * p >= 1e9:
+        if self._warn and n * p >= 1e9:
             warnings.warn('Array is Large, {}'.format(self.shape))
         new_array = self._array
         if self.center:
@@ -519,7 +522,11 @@ class ScaledArray:
         if isinstance(item, tuple) and len(item) > 2:
             raise IndexError('too many indices for array')
 
-        new_scaled_array = ScaledArray(self.scale, self.center, self.factor)
+        new_scaled_array = ScaledArray(scale=self.scale,
+                                       center=self.center,
+                                       factor=self.factor,
+                                       std_dist=self._std_dist,
+                                       warn=self._warn)
         if self._t_flag:
             new_scaled_array.fit(self._array.T[item])
         else:

@@ -14,6 +14,8 @@ import time
 from pandas_plink import read_plink1_bin, read_plink
 from pathlib import Path
 
+from tqdm import tqdm_notebook, tqdm
+
 from lmdec.array.matrix_ops import subspace_to_SVD, subspace_to_V
 from lmdec.array.scaled import ScaledArray
 from lmdec.decomp.init_methods import sub_svd_init, rnormal_start
@@ -61,7 +63,8 @@ class _IterAlgo(metaclass=ABCMeta):
                  factor: Optional[str] = None,
                  scoring_method: Optional[Union[List[str], str]] = None,
                  tol: Optional[Union[List[Union[float, int]], Union[float, int]]] = None,
-                 time_limit: Optional[int] = None):
+                 time_limit: Optional[int] = None,
+                 warn: Optional[bool] = None):
         if max_iter is None:
             self.max_iter = 50
         else:
@@ -103,6 +106,10 @@ class _IterAlgo(metaclass=ABCMeta):
         if any(x not in ['q-vals', 'rmse', 'v-subspace'] for x in scoring_method):
             raise ValueError('Must use scoring method in {}'.format(['q-vals', 'rmse', 'v-subspace']))
 
+        if warn is None:
+            warn = False
+
+        self.warn = warn
         self.tol = tol
         self.scoring_method = scoring_method
         self.history = None
@@ -256,7 +263,7 @@ class _IterAlgo(metaclass=ABCMeta):
     @recover_last_value
     def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
             bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
-            fam: Optional[Union[str, Path]] = None, **kwargs):
+            fam: Optional[Union[str, Path]] = None, verbose: bool = True, **kwargs):
         """ Computes an approximation to a k truncated Singular Value Decomposition.
 
         U, S, V <- svd(array)
@@ -297,6 +304,9 @@ class _IterAlgo(metaclass=ABCMeta):
             path to fam file that holds array to be decomposed into U, S, V
 
             '/path/to/data.fam'
+        verbose : bool
+            Flag whether to print out progress bar with tdqm.
+
         kwargs : dict
 
         Notes
@@ -322,7 +332,7 @@ class _IterAlgo(metaclass=ABCMeta):
         x_k = self._initialization(data, **kwargs)
 
         converged = False
-        for i in range(1, self.max_iter + 1):
+        for i in tqdm((range(1, self.max_iter + 1)), disable=not verbose):
             self.num_iter = i
             iter_start = time.time()
             acc_list = self._solution_accuracy(x_k, **kwargs)
@@ -352,7 +362,7 @@ class _IterAlgo(metaclass=ABCMeta):
 
         self.history.time['stop'] = time.time()
 
-        if not converged:
+        if self.warn and not converged:
             warnings.warn("Did not converge. \n"
                           "Time Usage : {0:.2f}s of {1}s (Time Limit) \n"
                           "Iteration Usage : {2} of {3} (Iteration Limit)"
@@ -375,7 +385,8 @@ class PowerMethod(_IterAlgo):
                  buffer=10,
                  sub_svd_start: bool = True,
                  init_row_sampling_factor: int = 5,
-                 time_limit=1000):
+                 time_limit=1000,
+                 warn: bool = False):
         """ Standard Implementation of the Power Method for computing the truncated SVD decomposition of an array
 
         Parameters
@@ -465,7 +476,8 @@ class PowerMethod(_IterAlgo):
                          factor=factor,
                          scoring_method=scoring_method,
                          tol=tol,
-                         time_limit=time_limit)
+                         time_limit=time_limit,
+                         warn=warn)
 
         if int(k) <= 0:
             raise ValueError('k must be a positive integer')
@@ -491,7 +503,7 @@ class PowerMethod(_IterAlgo):
 
         if not isinstance(data, ScaledArray):
             self.scaled_array = ScaledArray(scale=self._scale, center=self._center, factor=self._factor,
-                                            std_dist=self.std_method)
+                                            std_dist=self.std_method, warn=self.warn)
             self.scaled_array.fit(data)
         else:
             self.scaled_array = data
@@ -563,11 +575,12 @@ class PowerMethod(_IterAlgo):
 class _vPowerMethod(PowerMethod):
 
     def __init__(self, v_start: ArrayType, k=None, buffer=None, max_iter=None, scoring_method=None, tol=None,
-                 full_svd: bool = False):
+                 full_svd: bool = False, warn: bool = False):
         super().__init__(max_iter=max_iter,
                          scoring_method=scoring_method,
                          tol=tol,
-                         lmbd=1)
+                         lmbd=1,
+                         warn=warn)
         self.v_start = v_start.rechunk({0: 'auto', 1: -1})
         self.k = k
         self.buffer = buffer
@@ -626,11 +639,12 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
                  buffer=10,
                  sub_svd_start: bool = True,
                  init_row_sampling_factor: int = 5,
-                 max_sub_time=1000):
+                 max_sub_time=1000,
+                 warn: bool = False):
         super().__init__(k=k, max_iter=max_sub_iter, scale=scale, center=center, factor=factor,
                          scoring_method=scoring_method, tol=tol, buffer=buffer, sub_svd_start=sub_svd_start,
                          init_row_sampling_factor=init_row_sampling_factor, time_limit=max_sub_time,
-                         std_method=std_method)
+                         std_method=std_method, warn=warn)
         self.f = f
         self.history = None
         self.lmbd = lmbd
@@ -644,7 +658,7 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
     @recover_last_value
     def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
             bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
-            fam: Optional[Union[str, Path]] = None, **kwargs):
+            fam: Optional[Union[str, Path]] = None, verbose: bool = True, **kwargs):
 
         self._reset_history()
         self.history.time['start'] = time.time()
@@ -652,7 +666,7 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
         array = self.get_array(array, path_to_files, bed, bim, fam, **kwargs)
 
         if not isinstance(array, ScaledArray):
-            self.scaled_array = ScaledArray(scale=self._scale, center=self._center, factor=self._factor)
+            self.scaled_array = ScaledArray(scale=self._scale, center=self._center, factor=self._factor, warn=self.warn)
             self.scaled_array.fit(array)
         else:
             self.scaled_array = array
@@ -673,11 +687,11 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
 
         x = sub_array.T.dot(x)
 
-        for i, part in enumerate(partitions[:-1]):
+        for part in tqdm(partitions[:-1], disable=not verbose):
             _PM = _vPowerMethod(v_start=x, k=self.k, buffer=self.buffer, max_iter=self.max_iter,
-                                scoring_method=self.scoring_method, tol=self.tol)
+                                scoring_method=self.scoring_method, tol=self.tol, warn=self.warn)
 
-            x = _PM.svd(self.scaled_array[part, :], **{'mask_nan': False, 'transpose': False})
+            x = _PM.svd(self.scaled_array[part, :], verbose=False, **{'mask_nan': False, 'transpose': False})
             self.history.iter['last_value'] = _PM.history.iter['last_value']
             self.history.iter['sub_svd'].append(self.history.iter['last_value'])
 
@@ -694,6 +708,6 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
             self.history.time['iter'].append(_PM.history.time)
 
         _PM = _vPowerMethod(v_start=x, k=self.k, buffer=self.buffer, max_iter=self.max_iter,
-                            scoring_method=self.scoring_method, tol=self.tol, full_svd=True)
+                            scoring_method=self.scoring_method, tol=self.tol, full_svd=True, warn=self.warn)
 
-        return _PM.svd(self.scaled_array, **{'mask_nan': False, 'transpose': False})
+        return _PM.svd(self.scaled_array, verbose=False, **{'mask_nan': False, 'transpose': False})
