@@ -429,6 +429,35 @@ def test_PowerMethod_std_method():
         np.testing.assert_array_almost_equal(S_k, S_PM, decimal=2)
 
 
+def test_PowerMethod_project():
+    N, P = 1000, 1000
+    k = 10
+    svd_array = da.random.random(size=(N, P)).persist()
+    proj_array = da.random.random(size=(10, P)).persist()
+    mu = da.mean(svd_array, axis=0).persist()
+    std = da.diag(1/da.std(svd_array, axis=0)).persist()
+
+    for scale in [True, False]:
+        for center in [True, False]:
+            svd_array1 = svd_array
+            proj_array1 = proj_array
+            if center:
+                svd_array1 = svd_array1 - mu
+                proj_array1 = proj_array1 - mu
+            if scale:
+                svd_array1 = svd_array1.dot(std)
+                proj_array1 = proj_array1.dot(std)
+
+            U, S, V = da.linalg.svd(svd_array1)
+            U_k, S_k, V_k = svd_to_trunc_svd(U, S, V, k=k)
+
+            PM = PowerMethod(k=k, scale=scale, center=center, factor=None, tol=1e-12)
+            U_PM, S_PM, V_PM = PM.svd(array=svd_array)
+
+            np.testing.assert_array_almost_equal(PM.project(proj_array, onto=V_k.T), proj_array1.dot(V_k.T))
+
+
+
 def test_SSPM_case1():
     N, P, k = 100000, 100, 10
     array = np.zeros(shape=(N, P))

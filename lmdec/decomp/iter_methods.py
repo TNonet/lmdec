@@ -494,6 +494,40 @@ class PowerMethod(_IterAlgo):
         self.init_row_sampling_factor = init_row_sampling_factor
         self.compute = True
 
+    def project(self, x: Union[np.ndarray, da.core.Array], onto: Union[np.ndarray, da.core.Array],
+                scale_center_x: bool = True):
+        """ Projects `x` onto `onto`.
+
+        Roughly equivalent to Proj_{onto}(x)
+
+        Parameters
+        ----------
+        x : array_like, shape (N, P)
+            Data to be project onto `x`.
+        onto : array_like, shape (M, P)
+            Subspace for `x` to be projected onto.
+        scale_center_x : bool
+            Whether to scale and/or center `x`, if specified in PowerMethod settings.
+            if `scale_center_x` is False:
+                x will not be scaled and/or centered similar to PowerMethod.svd(...) works
+
+        Notes
+        -----
+        P in shape of `x` and shape of `onto` must match. In addition, for `scale_center_x` to be True, `P` must match
+        the dimensions of PowerMethod.scaled_array.center_vector and PowerMethod.scaled_array.scale_vector
+
+        Returns
+        -------
+        projected L array_like, shape (N, M)
+            `x` projected onto `onto`
+        """
+        x = da.array(x)
+        if scale_center_x:
+            sa = ScaledArray.fromScaledArray(array=x, scaled_array=self.scaled_array, factor=self.scaled_array.factor)
+        else:
+            sa = x
+        return sa.dot(onto)
+
     def _initialization(self, data, **kwargs):
         vec_t = self.k + self.buffer
 

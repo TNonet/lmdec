@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 import pytest
 import dask.array as da
@@ -432,6 +434,67 @@ def test_ScaledArray_std_method():
     sa.fit(array)
     p = array.mean(axis=0) / 2
     np.testing.assert_almost_equal(sa.scale_vector, 1/np.sqrt(2*p*(1-p)))
+
+
+def test_ScaledArray_fromArrayMoment_moments():
+    N1, P = 7, 10
+    N2 = 5
+    array1 = da.random.random(size=(N1, P)).persist()
+    array2 = da.random.random(size=(N2, P)).persist()
+    sa1 = ScaledArray(scale=True, center=True, factor='n')
+    sa1.fit(array1)
+
+    sa2 = ScaledArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
+
+    np.testing.assert_array_equal(sa2.center_vector, sa1.center_vector)
+    np.testing.assert_array_equal(sa2.scale_vector, sa1.scale_vector)
+    assert sa2.factor_value == N2
+    assert sa1.factor_value == N1
+
+
+def test_ScaledArray_fromArrayMoment_array():
+    N1, P = 7, 10
+    N2 = 5
+    array1 = da.random.random(size=(N1, P)).persist()
+    mu = da.mean(array1, axis=0)
+    std = da.diag(1/da.std(array1, axis=0))
+    array2 = da.random.random(size=(N2, P)).persist()
+    for scale in [True, False]:
+        for center in [True, False]:
+            for factor1 in [None, 'n', 'p']:
+                sa1 = ScaledArray(scale=scale, center=center, factor=factor1)
+                sa1.fit(array1)
+
+                for factor2, factor_value in zip([None, 'n', 'p'], [1, N2, P]):
+                    sa2 = ScaledArray.fromScaledArray(array=array2, scaled_array=sa1, factor=factor2)
+                    sa2_array = array2
+
+                    if center:
+                        sa2_array = sa2_array - mu
+                    if scale:
+                        sa2_array = sa2_array.dot(std)
+
+                    np.testing.assert_array_almost_equal(sa2.array, sa2_array)
+
+
+def test_ScaledArray_fromArrayMoment_bad_array():
+    N1, P1 = 7, 10
+    N2, P2 = 7, 9
+    array1 = da.random.random(size=(N1, P1)).persist()
+    array2 = da.random.random(size=(N2, P2)).persist()
+    sa1 = ScaledArray(scale=True, center=True, factor='n')
+    sa1.fit(array1)
+
+    with pytest.raises(ValueError):
+        ScaledArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
+
+
+def test_ScaledArray_fromArrayMoment_not_fit_array():
+    N1, P1 = 7, 10
+    array2 = da.random.random(size=(N1, P1)).persist()
+    sa1 = ScaledArray(scale=True, center=True, factor='n')
+    with pytest.raises(AttributeError):
+        ScaledArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
 
 
 def test_array_moment_std_method():

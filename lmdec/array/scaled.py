@@ -228,6 +228,46 @@ class ScaledArray:
         self._t_cache = None
         self._t_flag = False  # Implying the array is not a transposition of the original fit
 
+    @classmethod
+    def fromScaledArray(cls, array: da.core.Array, scaled_array: "ScaledArray",
+                        factor: Optional[str] = None) -> "ScaledArray":
+        """ Creates a ScaledArray with the same scale and center vectors as `scaled_array` but with the underlying array
+        of `array`.
+
+        Parameters
+        ----------
+        array : array_like, shape (?, P)
+            array to base a ScaledArray on top of.
+        scaled_array : ScaledArray, fit on array of shape (?, P)
+            ScaledArray to collect scale and center vectors from.
+        factor : str, optional
+            if None: new ScaledArray will have a factor_value of 1.
+            if 'n' factor value will come from array.shape[0]
+            if 'p' factor value will come from array.shape[1]
+
+        Returns
+        -------
+        scaled_array : ScaledArray
+            ScaledArray with underlying array as `array` and underlying moments from `array_moment`
+        """
+        if (scaled_array.scale and array.shape[1] != len(scaled_array.scale_vector))\
+                or (scaled_array.center and array.shape[1] != len(scaled_array.center_vector)):
+            array_moment_shape = len(scaled_array.scale_vector) if scaled_array.scale is not None\
+                else len(scaled_array.center_vector)
+            raise ValueError(f'expected array of shape {array.shape} to have matching second dimension '
+                             f'with array_moment shape, {array_moment_shape}')
+
+        sa = ScaledArray(scale=scaled_array.scale, center=scaled_array.center, factor=factor,
+                         std_dist=scaled_array._std_dist, warn=scaled_array._warn)
+        sa._array = array
+        sa._array_moment = ArrayMoment(a=array, std_dist=scaled_array._std_dist, warn=scaled_array._warn)
+        if sa.factor:
+            n, p = array.shape
+            sa._factor_value = n if sa.factor == 'n' else p
+        sa._array_moment._center_vector = scaled_array.center_vector
+        sa._array_moment._scale_vector = scaled_array.scale_vector
+        return sa
+
     def fit(self, a, x=None):
         """Finds mean and standard deviation of the columns of array (when specified)
 
@@ -429,17 +469,73 @@ class ScaledArray:
         return t_scaled_array
 
     def _scale_x(self, x, sym: bool = False) -> da.core.Array:
+        """ Scales the product of a matrix multiplication instead of the matrix itself
+
+        Let A be a matrix of shape (n by p) with non zero column stds, D of shape (p,).
+
+        Matrix B could be constructed as follows with zero column std.
+            B = A*Inv(Diag(D))
+        However, this is inefficient if only the matrix product of B, with a matrix x is needed.
+        Instead `_scale_x` implements:
+            Ax*Inv(Diag(D))
+            ^^
+            x being passed in already computed as Ax
+        with efficient broadcasting.
+
+        Parameters
+        ----------
+        x : array_like
+            Usually the product of Ax that needs to be scaled
+        sym : bool
+            Flag whether we are scaling twice in the case of AA'x
+            The square of the column standard deviations must be removed
+
+        Returns
+        -------
+        x_scaled : array_like
+
+        """
         try:
+            # self._array_moment.vector_width is not set until ScaledArray is fit_x.
             if len(x.shape) == 2 and self._array_moment.vector_width == x.shape[1]:
                 scale_matrix = self._array_moment.sym_scale_matrix if sym else self._array_moment.scale_matrix
                 return da.multiply(scale_matrix, x)
         except ValueError:
             pass
         scale_vector = self._array_moment.sym_scale_vector if sym else self._array_moment.scale_vector
-        x_h = diag_dot(scale_vector, x, return_diag=False)
-        return x_h
+        x_scaled = diag_dot(scale_vector, x, return_diag=False)
+        return x_scaled
 
     def _center_x(self, x, dx, transpose: bool = False) -> da.core.Array:
+        """ Centers the product of matrix multiplication instead of center the matrix
+
+        Let A be a matrix of shape (n by p) with non zero column means, U of shape (p,).
+
+        Matrix B could be constructed as follows with zero column mean.
+            B = A - 1'U where 1 is a 1 vector. And 1'U is an outer product of shape (n by p)
+        However, this is inefficient if only the matrix product of B, with a matrix x is needed.
+        Instead `_center_x` implements:
+
+            Ax - Ux
+             ^    ^- dx being passed in,
+             |
+             x being passed in
+        with efficient broadcasting.
+
+
+        Parameters
+        ----------
+        x : array_like
+            Usually the product of Ax that needs to be center
+        dx : array_like
+            Usually the original x before being multiplied by A
+        transpose : bool
+            Flag whether to indicate if A'x or Ax. Adjusts dimensions
+
+        Returns
+        -------
+        x_centered: array_like
+        """
         if transpose:
             # Computes mu1'x_k_h
             return x - da.squeeze(da.outer(self._array_moment.center_vector, dx.sum(axis=0)))
