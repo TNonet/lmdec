@@ -457,6 +457,28 @@ def test_PowerMethod_project():
             np.testing.assert_array_almost_equal(PM.project(proj_array, onto=V_k.T), proj_array1.dot(V_k.T))
 
 
+def test_PowerMethod_return_history():
+    max_iter = 5
+    array = da.random.random(size=(1000, 1000))
+    PM = PowerMethod(scoring_method=['rmse', 'q-vals', 'v-subspace'], max_iter=max_iter, tol=[1e-16, 1e-16, 1e-16])
+    history = PM.svd(array, return_history=True)
+
+    assert len(history.acc['q-vals']) == max_iter
+    assert len(history.acc['rmse']) == max_iter
+    assert len(history.acc['v-subspace']) == max_iter
+
+    assert len(history.iter['U']) == 0
+    assert len(history.iter['S']) == max_iter
+    assert len(history.iter['V']) == max_iter
+    assert len(history.iter['last_value']) == 3
+
+    assert history.time['start'] < history.time['stop']
+    assert len(history.time['step']) == max_iter
+    assert len(history.time['acc']) == max_iter
+
+    np.testing.assert_array_almost_equal(np.array(history.time['iter']),
+                                         np.array(history.time['acc']) + np.array(history.time['step']), decimal=3)
+
 
 def test_SSPM_case1():
     N, P, k = 100000, 100, 10
@@ -531,3 +553,19 @@ def test_SSPM_case3():
             v[j, int(f*(i+1)*N) - k + j] = 1
 
         np.testing.assert_almost_equal(subspace_dist(v, sub_V, sub_S), 0)
+
+
+def test_SSPM_return_history():
+    max_iter = 5
+    f = .2
+    array = da.random.random(size=(1000, 1000))
+    SSPM = SuccessiveBatchedPowerMethod(scoring_method=['rmse', 'q-vals', 'v-subspace'], f=f, max_sub_iter=max_iter,
+                                        tol=[1e-16, 1e-16, 1e-16])
+    history = SSPM.svd(array, return_history=True)
+
+    sub_iters = int(1/f)
+    for i in range(sub_iters):
+        assert len(history.time['iter']) == sub_iters - 1
+        assert len(history.iter['S']) == sub_iters - 1
+        assert len(history.iter['sub_svd']) == sub_iters
+        assert len(history.acc['sub_svd_acc']) == sub_iters - 1

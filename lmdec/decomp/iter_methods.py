@@ -156,7 +156,7 @@ class _IterAlgo(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def _finalization(self, x, **kwargs):
+    def _finalization(self, x, return_history, **kwargs):
         raise NotImplementedError
 
     @staticmethod
@@ -263,7 +263,7 @@ class _IterAlgo(metaclass=ABCMeta):
     @recover_last_value
     def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
             bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
-            fam: Optional[Union[str, Path]] = None, verbose: bool = True, **kwargs):
+            fam: Optional[Union[str, Path]] = None, verbose: bool = True, return_history: bool = False, **kwargs):
         """ Computes an approximation to a k truncated Singular Value Decomposition.
 
         U, S, V <- svd(array)
@@ -306,6 +306,11 @@ class _IterAlgo(metaclass=ABCMeta):
             '/path/to/data.fam'
         verbose : bool
             Flag whether to print out progress bar with tdqm.
+
+        return_history : bool
+            Flag whether to return tuple of (U, S, V) or the full history object.
+
+            Useful when running with cluster submission.
 
         kwargs : dict
 
@@ -358,7 +363,7 @@ class _IterAlgo(metaclass=ABCMeta):
             if time.time() - self.history.time['start'] > self.time_limit:
                 break
 
-        result = self._finalization(x_k, **kwargs)
+        result = self._finalization(x_k, return_history=return_history, **kwargs)
 
         self.history.time['stop'] = time.time()
 
@@ -596,14 +601,19 @@ class PowerMethod(_IterAlgo):
             acc_list.append(acc)
         return acc_list
 
-    def _finalization(self, x, **kwargs):
+    def _finalization(self, x, return_history, **kwargs):
         if self.history.iter['last_value'][2].shape[1] == self.scaled_array.shape[1]:
             # If V from last_value is calculated with full_v.
-            return self.history.iter['last_value']
+            pass
         else:
             U, S, _ = self.history.iter['last_value']
             V = subspace_to_V(x, self.scaled_array, self.k).persist()
-            return U, S, V
+            self.history.iter['last_value'] = U, S, V
+
+        if return_history:
+            return self.history
+        else:
+            return self.history.iter['last_value']
 
 
 class _vPowerMethod(PowerMethod):
@@ -625,11 +635,12 @@ class _vPowerMethod(PowerMethod):
         self.scaled_array.fit_x(self.v_start)
         return self.scaled_array.dot(self.v_start)
 
-    def _finalization(self, x, **kwargs) -> Union[da.core.Array, Tuple[da.core.Array, da.core.Array, da.core.Array]]:
+    def _finalization(self, x, return_history, **kwargs) -> Union[da.core.Array,
+                                                                  Tuple[da.core.Array, da.core.Array, da.core.Array]]:
         if not self.full_svd:
             return self.scaled_array.T.dot(x)
         else:
-            return super()._finalization(x)
+            return super()._finalization(x, return_history=False)
 
 
 class SuccessiveBatchedPowerMethod(PowerMethod):
@@ -692,7 +703,7 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
     @recover_last_value
     def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
             bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
-            fam: Optional[Union[str, Path]] = None, verbose: bool = True, **kwargs):
+            fam: Optional[Union[str, Path]] = None, verbose: bool = True, return_history: bool = False, **kwargs):
 
         self._reset_history()
         self.history.time['start'] = time.time()
@@ -744,4 +755,12 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
         _PM = _vPowerMethod(v_start=x, k=self.k, buffer=self.buffer, max_iter=self.max_iter,
                             scoring_method=self.scoring_method, tol=self.tol, full_svd=True, warn=self.warn)
 
-        return _PM.svd(self.scaled_array, verbose=False, **{'mask_nan': False, 'transpose': False})
+        _PM.svd(self.scaled_array, verbose=False, **{'mask_nan': False, 'transpose': False})
+
+        self.history.iter['last_value'] = _PM.history.iter['last_value']
+        self.history.iter['sub_svd'].append(self.history.iter['last_value'])
+
+        if return_history:
+            return self.history
+        else:
+            return self.history.iter['last_value']
