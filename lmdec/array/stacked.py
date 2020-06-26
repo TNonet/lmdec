@@ -1,38 +1,12 @@
-from typing import List, Callable, Generator, Union, Iterable
+from typing import Union, Iterable, Generator
 
 import numpy as np
 import dask
 
 import dask.array as da
 
-
-def tree_reduction(items: Union[List[dask.array.core.Array],
-                                Generator[dask.array.core.Array, None, None]],
-                   binary_operator: Callable[[dask.array.core.Array, dask.array.core.Array],
-                                             dask.array.core.Array]) -> dask.array.core.Array:
-    items = list(items)
-
-    while len(items) > 1:
-        reduced_items = []
-        for i in range(0, len(items) - 1, 2):
-            item = binary_operator(items.pop(), items.pop())
-            reduced_items.append(item)
-        items = reduced_items + items
-
-    return items[0]
-
-
-def linear_reduction(items: Union[List[dask.array.core.Array],
-                                  Generator[dask.array.core.Array, None, None]],
-                     binary_operator: Callable[[dask.array.core.Array, dask.array.core.Array],
-                                               dask.array.core.Array]) -> dask.array.core.Array:
-    if isinstance(items, list):
-        items = iter(items)
-
-    reduced = next(items)
-    for item in items:
-        reduced = binary_operator(reduced, item)
-    return reduced
+from lmdec.array.matrix_ops import expand_arrays
+from lmdec.array.reduce import tree_reduction, linear_reduction
 
 
 class StackedArray(dask.array.core.Array):
@@ -127,13 +101,18 @@ class StackedArray(dask.array.core.Array):
 
     To gain access to the underlying array for these operations use method `array`
 
-    >>>B, C, D, E = (dask.random.random(shape=(10,10)) for _ in range(4))
+    >>>B, C, D, E = (dask.array.random.random(shape=(10,10)) for _ in range(4))
     ...A = StackedArray([B, C, D, E])
     ...assert type(A) == lmdec.array.stacked.StackedArray
     ...assert type(A.array) == dask.array.core.Array
 
     A.dot(x) and A.array.dot(x) preform very different operations as StackedArray re-implements dot.
     A.std(x) and A.array.std(x) preform the exact same operation as StackedArray does not re-implement dot.
+
+    BroadCasting
+        The Broadcasting Rule:
+            "In order to broadcast, the size of the trailing axes for both arrays in an operation must either be the
+            same size or one of them must be one." - https://numpy.org/devdocs/user/theory.broadcasting.html
     """
 
     def __new__(cls, arrays: Iterable[dask.array.core.Array], tree_reduce: bool = True):
@@ -145,15 +124,15 @@ class StackedArray(dask.array.core.Array):
         if any(not isinstance(x, (dask.array.core.Array, np.ndarray)) for x in arrays):
             raise ValueError(f"expected Iterable of dask.array.core.Array.")
 
-        if len({x.shape for x in arrays}) != 1:
-            raise ValueError(f"expected constant shape of arrays, got {set([x.shape for x in arrays])}")
-
         if tree_reduce:
             reduce = tree_reduction
         else:
             reduce = linear_reduction
 
-        array = reduce(arrays, da.add)
+        try:
+            array = reduce(arrays, da.add)
+        except ValueError:
+            raise ValueError(f'expected arrays to have broadcast-able shapes, got {set([a.shape for a in arrays])}')
 
         self = super(StackedArray, cls).__new__(cls, array.dask, array.name, array.chunks, array.dtype,
                                                 array._meta, array.shape)
@@ -165,28 +144,84 @@ class StackedArray(dask.array.core.Array):
         return self
 
     @property
-    def arrays(self):
+    def arrays(self) -> Generator[da.core.Array, None, None]:
         yield from self._arrays
 
     @property
-    def T(self):
-        return StackedArray((array.T for array in self.arrays), tree_reduce=self.tree_reduce)
+    def T(self) -> "StackedArray":
+        if self.ndim != 2:
+            raise NotImplementedError
+        transposed_arrays = []
+        n, p = self.shape
+        for array in self.arrays:
+            if array.shape == (n, p):
+                out = array.T
+            elif array.shape in [(p,), (1, p)]:
+                out = array.reshape(p, 1)
+            else:
+                out = array.reshape(1, n)
+            transposed_arrays.append(out)
+        return StackedArray(transposed_arrays, tree_reduce=self.tree_reduce)
 
     @property
     def width(self):
         return len(self._arrays)
 
-    def dot(self, x):
-        return self.reduce((array.dot(x) for array in self.arrays), da.add)
+    def dot(self, x: Union[dask.array.core.Array, np.ndarray]) -> da.core.Array:
+        """ See np.dot
 
-    def persist(self):
+        Notes
+        -----
+        See np.dot?
+
+        Dot product of `self` and x. Specifically,
+
+            - If both `self` and `x` are 1-D arrays, it is inner product of vectors
+            (without complex conjugation).
+
+            - If both `self` and `x` are 2-D arrays, it is matrix multiplication,
+            but using :func:`matmul` or ``a @ b`` is preferred.
+
+            - If either `a` or `b` is 0-D (scalar), it is equivalent to :func:`multiply`
+              and using ``numpy.multiply(a, b)`` or ``a * b`` is preferred.
+
+        The next two cases are not Implemented:
+
+            - If `a` is an N-D array and `b` is a 1-D array, it is a sum product over
+              the last axis of `a` and `b`.
+
+            - If `a` is an N-D array and `b` is an M-D array (where ``M>=2``), it is a
+              sum product over the last axis of `a` and the second-to-last axis of `b`::
+
+                dot(a, b)[i,j,k,m] = sum(a[i,j,:] * b[k,:,m])
+        """
+        if self.ndim != 2 or x.ndim > 2:
+            raise NotImplementedError
+        n, p = self.shape
+        dot_sums = []
+        for array in self.arrays:
+            if array.shape == self.shape:
+                out = array.dot(x)
+            elif array.shape == (n, 1):
+                row = x.sum(axis=0)
+                out = array * row
+                if x.ndim == 1:
+                    out = np.squeeze(out)
+            elif array.shape == (1, p):
+                out = np.squeeze(array).dot(x)
+            elif array.shape == (p,):
+                out = array.dot(x)
+            dot_sums.append(out)
+        return self.reduce(dot_sums, da.add).rechunk('auto')
+
+    def persist(self) -> "StackedArray":
         return StackedArray((array.persist() for array in self.arrays), tree_reduce=self.tree_reduce)
 
-    def mean(self, axis=None, dtype=None, keepdims=False, split_every=None, out=None):
+    def mean(self, axis=None, dtype=None, keepdims=False, split_every=None, out=None) -> da.core.Array:
         if out is not None:
             raise NotImplementedError(f'`out` argument is not supported for {StackedArray.__name__}')
         means = (da.mean(array, axis=axis, dtype=dtype, keepdims=keepdims, split_every=split_every, out=None)
-                 for array in self.arrays)
+                 for array in expand_arrays(self.arrays))
         return self.reduce(means, da.add)
 
     # def std(self, axis=None, dtype=None, keepdims=False, ddof=0, split_every=None, out=None):
@@ -204,21 +239,37 @@ class StackedArray(dask.array.core.Array):
     #
     #     return da.sqrt(sum_weight_std)
 
-    def get_subarray(self, item):
+    def get_subarray(self, item) -> da.core.Array:
         return self._arrays[item]
 
-    def __getitem__(self, item):
-        return StackedArray((array[item] for array in self.arrays), tree_reduce=self.tree_reduce)
+    def __getitem__(self, item) -> "StackedArray":
+        if not isinstance(item, tuple):
+            return StackedArray((array[item] for array in self.arrays), tree_reduce=self.tree_reduce)
+        else:
+            if len(item) > self.ndim:
+                raise IndexError('Too many indices for array')
+            sub_arrays = []
+            for array in self.arrays:
+                sub_array_item = []
+                for i, s in zip(item[-len(array.shape):], array.shape):
+                    if s > 1:
+                        sub_array_item.append(i)
+                    elif isinstance(i, slice):
+                        sub_array_item.append(slice(None, None, None))
+                    else:
+                        sub_array_item.append(0)
+                sub_array_item = tuple(sub_array_item)
+                sub_arrays.append(array[sub_array_item])
+            return StackedArray(sub_arrays, tree_reduce=self.tree_reduce)
 
     def __repr__(self):
         spaces = '\n' + ' ' * (len(StackedArray.__name__) + 1)
         stacked_arrays = spaces.join([str(array) for array in self.arrays])
         return f"{StackedArray.__name__}({stacked_arrays})"
 
-    def rechunk(self, chunks='auto', threshold=None, block_size_limit=None):
+    def rechunk(self, chunks='auto', threshold=None, block_size_limit=None) -> "StackedArray":
         return StackedArray((array.rechunk(chunks, threshold, block_size_limit) for array in self.arrays),
                             tree_reduce=self.tree_reduce)
 
-    def reshape(self, *shape):
-        arrays = (array.reshape(*shape) for array in self.arrays)
-        return StackedArray((array.reshape(*shape) for array in self.arrays), tree_reduce=self.tree_reduce)
+    def reshape(self, *shape) -> "StackedArray":
+        raise NotImplementedError
