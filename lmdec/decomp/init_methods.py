@@ -6,17 +6,18 @@ from dask.array.linalg import tsqr
 from dask.array.random import RandomState
 
 from lmdec.array.random import array_split
-from lmdec.array.scaled import ScaledArray
+from lmdec.array.types import LargeArrayType
 from lmdec.array.wrappers.time_logging import time_param_log
 
 
 @time_param_log
-def v_init(array: ScaledArray, v: Union[da.Array, np.ndarray], log: int = 0) -> Union[da.Array, Tuple[da.Array, dict]]:
+def v_init(array: LargeArrayType, v: Union[da.Array, np.ndarray],
+           log: int = 0) -> Union[da.Array, Tuple[da.Array, dict]]:
     """Computes estimation of left Eigenvectors of `a` from an initial guess `v`
 
     Parameters
     ----------
-    array : ScaledArray
+    array : LargeArrayType
         array of which the left eigenvectors will be estimated
     v : array_like
         Initial guess of right right hand eigenvectors of `array`.
@@ -33,8 +34,6 @@ def v_init(array: ScaledArray, v: Union[da.Array, np.ndarray], log: int = 0) -> 
 
     U, _, _ = tsqr(x_k, compute_svd=True)
 
-    # u = u.rechunk('auto')
-
     if log:
         return U, {}
     else:
@@ -42,7 +41,7 @@ def v_init(array: ScaledArray, v: Union[da.Array, np.ndarray], log: int = 0) -> 
 
 
 @time_param_log
-def sub_svd_init(array: ScaledArray,
+def sub_svd_init(array: LargeArrayType,
                  k: int,
                  warm_start_row_factor: float = 5,
                  seed: int = 42,
@@ -52,7 +51,7 @@ def sub_svd_init(array: ScaledArray,
 
     Parameters
     ----------
-    array : ScaledArray
+    array : LargeArrayType
         array of which the top `k` left eigenvectors will be estimated
     k : int
         number of components to estimate
@@ -95,9 +94,12 @@ def sub_svd_init(array: ScaledArray,
     row_fraction = rows / n
 
     I, _ = array_split(array_shape=array.shape, f=row_fraction, axis=0, seed=seed, log=0)
+    try:
+        sub_array = array[I, :].T
+    except NotImplementedError:
+        sub_array = array[0: rows, :].T
 
-    sub_array = array[I, :].T
-    sub_array = sub_array.rechunk({0: -1, 1: 'auto'})
+    # sub_array = sub_array.rechunk({0: -1, 1: 'auto'})
     _sub_svd_return = _sub_svd(array, sub_array, k=k, log=sub_log)
 
     if sub_log:
@@ -114,8 +116,8 @@ def sub_svd_init(array: ScaledArray,
 
 
 @time_param_log
-def _sub_svd(array: "ScaledArray",
-             sub_array: "ScaledArray",
+def _sub_svd(array: LargeArrayType,
+             sub_array: LargeArrayType,
              k: int = 5,
              log: int = 1) -> Union[da.core.Array,
                                     Tuple[da.core.Array, dict]]:
@@ -123,9 +125,9 @@ def _sub_svd(array: "ScaledArray",
 
     Parameters
     ----------
-    array : ScaledArray
+    array : LargeArrayType
         array of which the top `k` left eigenvectors will be estimated
-    sub_array : ScaledArray
+    sub_array : LargeArrayType
         array of which the top `k` left eigenvectors will be calculated
     k : int
         number of eigenvectors of `sub_array` to compute
@@ -138,7 +140,8 @@ def _sub_svd(array: "ScaledArray",
         estimation of left Eigenvectors of `array`
     """
     # VSU' <--- SVD of A'
-    V, _, _ = tsqr(sub_array.array, compute_svd=True)  # SVD of A' -> VSU'
+
+    V, _, _ = tsqr(sub_array, compute_svd=True)  # SVD of A' -> VSU'
     U = v_init(array, V[:, :k])
 
     U = U.rechunk({0: 'auto', 1: -1})
@@ -149,7 +152,7 @@ def _sub_svd(array: "ScaledArray",
 
 
 @time_param_log
-def rnormal_start(array: ScaledArray,
+def rnormal_start(array: LargeArrayType,
                   k: int,
                   seed: int = 42,
                   log: int = 1) -> Union[da.core.Array,
@@ -160,7 +163,7 @@ def rnormal_start(array: ScaledArray,
 
     Parameters
     ----------
-    array : ScaledArray
+    array : LargeArrayType
         array of which shape will be used to allow for Power Iteration
     k : int
         number of columns in `omega`

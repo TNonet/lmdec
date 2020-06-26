@@ -1,31 +1,21 @@
-from abc import ABCMeta, abstractmethod
-from collections import namedtuple
-
-from typing import Union, List, Optional, Tuple
-
+import time
 import warnings
+from abc import ABCMeta, abstractmethod
+from typing import Union, List, Optional, Tuple
 
 import dask
 import dask.array as da
-from dask.array.linalg import tsqr
 import numpy as np
-import time
-
-from pandas_plink import read_plink1_bin, read_plink
-from pathlib import Path
-
-from tqdm import tqdm_notebook, tqdm
+from dask.array.linalg import tsqr
+from tqdm import tqdm
 
 from lmdec.array.matrix_ops import subspace_to_SVD, subspace_to_V
-from lmdec.array.scaled import ScaledArray
-from lmdec.decomp.init_methods import sub_svd_init, rnormal_start
 from lmdec.array.metrics import q_value_converge, subspace_dist, rmse_k
 from lmdec.array.random import array_constant_partition, cumulative_partition
 from lmdec.array.types import ArrayType, LargeArrayType
 from lmdec.array.wrappers.recover_iter import recover_last_value
-
-
-PowerMethodSummary = namedtuple('PowerMethodSummary', ['time', 'acc', 'iter'])
+from lmdec.decomp.init_methods import sub_svd_init, rnormal_start
+from lmdec.decomp.utils import PowerMethodSummary
 
 
 class _IterAlgo(metaclass=ABCMeta):
@@ -58,11 +48,9 @@ class _IterAlgo(metaclass=ABCMeta):
 
     def __init__(self,
                  max_iter: Optional[int] = None,
-                 scale: Optional[bool] = None,
-                 center: Optional[bool] = None,
-                 factor: Optional[str] = None,
                  scoring_method: Optional[Union[List[str], str]] = None,
                  tol: Optional[Union[List[Union[float, int]], Union[float, int]]] = None,
+                 factor: Optional[Union['str', float]] = None,
                  time_limit: Optional[int] = None,
                  warn: Optional[bool] = None):
         if max_iter is None:
@@ -73,15 +61,6 @@ class _IterAlgo(metaclass=ABCMeta):
             if int(max_iter) != max_iter:
                 raise ValueError('max_iter must be a integer')
             self.max_iter = max_iter
-        if scale is None:
-            self._scale = True
-        else:
-            self._scale = scale
-        if center is None:
-            self._center = True
-        else:
-            self._center = center
-        self._factor = factor
         if scoring_method is None:
             scoring_method = 'q-vals'
         if time_limit is None:
@@ -106,6 +85,10 @@ class _IterAlgo(metaclass=ABCMeta):
         if any(x not in ['q-vals', 'rmse', 'v-subspace'] for x in scoring_method):
             raise ValueError('Must use scoring method in {}'.format(['q-vals', 'rmse', 'v-subspace']))
 
+        if factor is None:
+            factor = None
+        self.factor = factor
+
         if warn is None:
             warn = False
 
@@ -114,7 +97,7 @@ class _IterAlgo(metaclass=ABCMeta):
         self.scoring_method = scoring_method
         self.history = None
         self.num_iter = None
-        self.scaled_array = None
+        self.array = None
 
     def _reset_history(self):
         summary = PowerMethodSummary(time={'start': None, 'stop': None, 'iter': [], 'step': [], 'acc': []},
@@ -122,18 +105,6 @@ class _IterAlgo(metaclass=ABCMeta):
                                      iter={'U': [], 'S': [], 'V': [], 'last_value': []})
 
         self.history = summary
-
-    @property
-    def scale(self):
-        return self.scaled_array.scale_vector
-
-    @property
-    def center(self):
-        return self.scaled_array.center_vector
-
-    @property
-    def factor(self):
-        return self.scaled_array.factor_value
 
     @property
     def time(self):
@@ -159,111 +130,8 @@ class _IterAlgo(metaclass=ABCMeta):
     def _finalization(self, x, return_history, **kwargs):
         raise NotImplementedError
 
-    @staticmethod
-    def get_array(array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
-                  bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
-                  fam: Optional[Union[str, Path]] = None, persist: bool = False, transpose: bool = False,
-                  mask_nan: bool = False, dtype: Optional[str] = 'uint8',
-                  mask_fill: Union[str, int] = 'median') -> LargeArrayType:
-        """Gathers array from possible methods
-
-        Requires one of the following parameter configures to be satisfied to load an array:
-            - array is specified and no other parameters are specified
-            - path_to_files is specified and no other parameters are specified
-            - bim AND fam AND bed are specified and no other parameters are specified
-
-        Parameters
-        ----------
-        array : LargeArrayType, optional
-                Union[Dask Array, Numpy Array]
-        path_to_files : path_like, optional
-            Assuming bim, fam, bed files are in the following format
-                </path/to/data.bim>
-                </path/to/data.fam>
-                </path/to/data.bed>
-            Then, path_to_files would be '/path/to/data'
-        bed : path_like, optional
-            '/path/to/data.bed'
-        bim : path_like, optional
-            '/path/to/data.bim'
-        fam : path_like, optional
-            '/path/to/data.fam'
-        transpose : bool
-            Whether `array` is stored/loaded in transposed format
-
-            If A is stored/loaded as A.T but SVD(A) is desired set transpose flag to True
-        persist: bool
-            Whether to hold/compute `array` in memory or not.
-
-            Will decrease computation time at the cost of greatly increasing memory requirements.
-            If `array` can be stored safely in memory, setting persist to True is a reasonable option.
-        mask_nan : bool
-            Whether to mask nan values in `array`
-
-            If `array` has no nan-values setting this flag to False will increase computation time.
-
-        mask_fill : numeric of type `dtype` or 'mean' or 'median'
-            If numeric, will be used as value to replace nan-values
-            If 'mean' or 'median', method will be used to fill nan-values.
-
-            #TODO: Implement Row or Column specific mask_fills by expanding ScaledArray functionality
-
-        dtype : str, optional
-            If persisting the array, convert to type `dtype`.
-
-        Returns
-        -------
-        array : ScaledArray or Dask Array
-            Loaded or converted Dask Array
-        """
-        if array is not None and not all([path_to_files, bed, bim, fam]):
-            pass
-        elif path_to_files is not None and not all([array, bed, bim, fam]):
-            (_, _, G) = read_plink(path_to_files)
-            array = G
-        elif all(p is not None for p in [bed, bim, fam]) and not all([array, path_to_files]):
-            G = read_plink1_bin(bed, bim, fam)
-            array = G.data
-        else:
-            raise ValueError('Uninterpretable input.'
-                             ' Please specify array, xor path_to_files, xor (bed and bim and fim)')
-
-        if isinstance(array, (ScaledArray, da.core.Array)):
-            pass
-        elif isinstance(array, np.ndarray):
-            array = da.from_array(array, chunks='auto')
-
-        if len(array.shape) != 2:
-            raise ValueError("Must be a 2-D array")
-
-        if transpose:
-            array = array.T
-            array = array.rechunk({0: 'auto', 1: -1})
-
-        if mask_nan:
-            if isinstance(mask_fill, int):
-                mask_fill = mask_fill
-            elif mask_fill == 'median':
-                mask_fill = round(da.nanmedian(da.nanmedian(array, axis=0), axis=0).compute())
-            elif mask_fill == 'mean':
-                mask_fill = round(da.nanmean(array).compute())
-            else:
-                raise NotImplementedError('No method of {}'.format(mask_fill))
-            array = da.ma.masked_invalid(array)
-            da.ma.set_fill_value(array, mask_fill)
-            array = da.ma.filled(array)
-
-        if persist:
-            if dtype:
-                array = array.astype(dtype)
-            array = array.persist()
-
-        return array
-
     @recover_last_value
-    def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
-            bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
-            fam: Optional[Union[str, Path]] = None, verbose: bool = True, return_history: bool = False, **kwargs):
+    def svd(self, array: LargeArrayType, verbose: bool = True, return_history: bool = False, **kwargs):
         """ Computes an approximation to a k truncated Singular Value Decomposition.
 
         U, S, V <- svd(array)
@@ -282,28 +150,8 @@ class _IterAlgo(metaclass=ABCMeta):
 
         Parameters
         ----------
-        array : array_like, optional
+        array : array_like
             array to be decomposed into U, S, V
-        path_to_files : path_like, optional
-            path to bim, fam, and bed files that hold array to be decomposed into U, S, V
-
-            Assuming bim, fam, bed files are in the following format
-                </path/to/data.bim>
-                </path/to/data.fam>
-                </path/to/data.bed>
-            Then, path_to_files would be '/path/to/data'
-        bed : path_like, optional
-            path to bed file that holds array to be decomposed into U, S, V
-
-            '/path/to/data.bed'
-        bim : path_like, optional
-            path to bim file that holds array to be decomposed into U, S, V
-
-            '/path/to/data.bim'
-        fam : path_like, optional
-            path to fam file that holds array to be decomposed into U, S, V
-
-            '/path/to/data.fam'
         verbose : bool
             Flag whether to print out progress bar with tdqm.
 
@@ -314,27 +162,21 @@ class _IterAlgo(metaclass=ABCMeta):
 
         kwargs : dict
 
-        Notes
-        -----
-        See get_array for details on kwargs and loading formats
-
         Returns
         -------
         U : Dask Array
-            Estimation of top k left singular vectors of `array
+            Estimation of top k left singular vectors of 'array'
         S : Dask Array
-            Estimation of top k singular values of `array
+            Estimation of top k singular values of 'array'
         V : Dask Array
-            Estimation of top k right  singular vectors of `array
+            Estimation of top k right  singular vectors of 'array'
         """
 
         self._reset_history()
 
         self.history.time['start'] = time.time()
 
-        data = self.get_array(array, path_to_files, bed, bim, fam, **kwargs)
-
-        x_k = self._initialization(data, **kwargs)
+        x_k = self._initialization(array, **kwargs)
 
         converged = False
         for i in tqdm((range(1, self.max_iter + 1)), disable=not verbose):
@@ -354,7 +196,7 @@ class _IterAlgo(metaclass=ABCMeta):
             self._parameter_step(x_k, **kwargs)
 
             step_start = time.time()
-            x_k = self._solution_step(x_k, **kwargs)
+            x_k = self._solution_step(x_k, **kwargs)  # x_k+1 <= AA'x_k
             self.history.time['step'].append(time.time() - step_start)
 
             iter_end = time.time()
@@ -380,19 +222,16 @@ class PowerMethod(_IterAlgo):
 
     def __init__(self, k: int = 10,
                  max_iter: int = 50,
-                 scale: bool = True,
-                 center: bool = True,
-                 std_method: str = 'normal',
-                 factor: Optional[str] = 'n',
                  scoring_method='q-vals',
                  tol=.1,
+                 factor='n',
                  lmbd=.01,
                  buffer=10,
                  sub_svd_start: bool = True,
                  init_row_sampling_factor: int = 5,
                  time_limit=1000,
                  warn: bool = False):
-        """ Standard Implementation of the Power Method for computing the truncated SVD decomposition of an array
+        """ Implementation of the Power Method for computing the truncated SVD decomposition of an array
 
         Parameters
         ----------
@@ -400,26 +239,7 @@ class PowerMethod(_IterAlgo):
             number of components in the singular value decomposition
 
         max_iter : int
-            maximum number of iterations to run before returning best value
-
-        scale : bool
-            whether to scale array so the columns have standard deviation close to 1
-
-            scaled after array is centered or not centered
-
-        center
-            whether to center the array so the columns have a mean close to 1
-
-        factor : str, optional
-            factor to divide singular value results by.
-
-            if factor is None -> will not divide singular values
-            if factor is 'n' -> will scale by number of rows
-            if factor is 'p' -> will scale by number of columns
-
-            In other words
-
-            singular values of array, s(array) == s(1/factor * array array')
+            maximum number of iterations to run before returning last value
 
         scoring_method : str or list of str
             accuracy method or list of  accuracy methods that will be evaluated at each iteration.
@@ -434,7 +254,7 @@ class PowerMethod(_IterAlgo):
             - 'v-subspace' see subspace_dist in lmdec.array.metrics for more information
                 Is faster than 'rmse' but slower than 'q-vals'
 
-            if `scoring_method` is a list, then `tol` must be a list too.
+            if `scoring_method` is a list, then `tol` must be a list of the same length too.
 
             if `scoring_method` is a list, convergence will be assigned if one of the tolerance criteria is found.
 
@@ -444,7 +264,9 @@ class PowerMethod(_IterAlgo):
             tolerances needed for convergence determination that will be evaluated at each iteration.
 
         lmbd : float
-            percentage of previous iteration to replace with Gaussian Noise
+            percentage of previous iteration to replace with Gaussian Noise.
+
+            This is useful to prevent convergence on a lower magnitude eigenvector
 
             x = (1 - lmbd)*x + lmbda*N(0, ||x||_c)
             Note that Gaussian Noise is scaled by ||x||_c which is a vector of the column 2 norms of x
@@ -476,11 +298,9 @@ class PowerMethod(_IterAlgo):
         """
 
         super().__init__(max_iter=max_iter,
-                         scale=scale,
-                         center=center,
-                         factor=factor,
                          scoring_method=scoring_method,
                          tol=tol,
+                         factor=factor,
                          time_limit=time_limit,
                          warn=warn)
 
@@ -491,7 +311,6 @@ class PowerMethod(_IterAlgo):
         self.k = int(k)
         self.buffer = int(buffer)
         self.lmbd = lmbd
-        self.std_method = std_method
 
         self.sub_svd_start = sub_svd_start
         if init_row_sampling_factor <= 0:
@@ -526,12 +345,7 @@ class PowerMethod(_IterAlgo):
         projected L array_like, shape (N, M)
             `x` projected onto `onto`
         """
-        x = da.array(x)
-        if scale_center_x:
-            sa = ScaledArray.fromScaledArray(array=x, scaled_array=self.scaled_array, factor=self.scaled_array.factor)
-        else:
-            sa = x
-        return sa.dot(onto)
+        raise NotImplementedError
 
     def _initialization(self, data, **kwargs):
         vec_t = self.k + self.buffer
@@ -540,15 +354,17 @@ class PowerMethod(_IterAlgo):
             raise ValueError('Cannot find more than min(n,p) singular values of array function.'
                              'Currently k = {}, buffer = {}. k + b > min(n,p)'.format(self.k, self.buffer))
 
-        if not isinstance(data, ScaledArray):
-            self.scaled_array = ScaledArray(scale=self._scale, center=self._center, factor=self._factor,
-                                            std_dist=self.std_method, warn=self.warn)
-            self.scaled_array.fit(data)
-        else:
-            self.scaled_array = data
+        self.array = da.array(data)
+
+        if self.factor == 'n':
+            self.factor = self.array.shape[0]
+        elif self.factor == 'p':
+            self.factor = self.array.shape[1]
+        elif self.factor is None:
+            self.factor = False
 
         if self.sub_svd_start:
-            x = sub_svd_init(self.scaled_array,
+            x = sub_svd_init(self.array,
                              k=vec_t,
                              warm_start_row_factor=self.init_row_sampling_factor,
                              log=0)
@@ -558,14 +374,15 @@ class PowerMethod(_IterAlgo):
                 x *= (1 - self.lmbd)
                 x += (self.lmbd * c_norms / np.sqrt(x.shape[0])) * da.random.normal(size=x.shape)
         else:
-            x = rnormal_start(self.scaled_array, vec_t, log=0)
+            x = rnormal_start(self.array, vec_t, log=0)
 
-        self.scaled_array.fit_x(x)
         return x.persist()
 
     def _solution_step(self, x, **kwargs):
         q, _ = tsqr(x)
-        x = self.scaled_array.sym_mat_mult(x=q)  # x <- AA'q
+        x = self.array.dot(self.array.T.dot(q))
+        if self.factor:
+            x = x/self.factor
         return x.persist()
 
     def _parameter_step(self, x, **kwargs):
@@ -573,9 +390,9 @@ class PowerMethod(_IterAlgo):
 
     def _solution_accuracy(self, x, **kwargs):
         if any(m in self.scoring_method for m in ['rmse', 'v-subspace']):
-            U_k, S_k, V_k = subspace_to_SVD(x, self.scaled_array, sqrt_s=True, k=self.k, full_v=True, log=0)
+            U_k, S_k, V_k = subspace_to_SVD(x, self.array, sqrt_s=True, k=self.k, full_v=True, log=0)
         else:
-            U_k, S_k, V_k = subspace_to_SVD(x, self.scaled_array, sqrt_s=True, k=self.k, full_v=False, log=0)
+            U_k, S_k, V_k = subspace_to_SVD(x, self.array, sqrt_s=True, k=self.k, full_v=False, log=0)
 
         U_k, S_k, V_k = dask.persist(U_k, S_k, V_k)
 
@@ -590,7 +407,7 @@ class PowerMethod(_IterAlgo):
                     acc = float('INF')
                 self.history.iter['S'].append(S_k.compute())
             elif method == 'rmse':
-                acc = rmse_k(self.scaled_array, U_k, S_k ** 2)
+                acc = rmse_k(self.array, U_k, S_k ** 2, factor=self.factor)
             else:  # method == 'v-subspace'
                 try:
                     prev_V_k = self.history.iter['V'][-1]
@@ -602,12 +419,12 @@ class PowerMethod(_IterAlgo):
         return acc_list
 
     def _finalization(self, x, return_history, **kwargs):
-        if self.history.iter['last_value'][2].shape[1] == self.scaled_array.shape[1]:
+        if self.history.iter['last_value'][2].shape[1] == self.array.shape[1]:
             # If V from last_value is calculated with full_v.
             pass
         else:
             U, S, _ = self.history.iter['last_value']
-            V = subspace_to_V(x, self.scaled_array, self.k).persist()
+            V = subspace_to_V(x, self.array, self.k).persist()
             self.history.iter['last_value'] = U, S, V
 
         if return_history:
@@ -617,12 +434,33 @@ class PowerMethod(_IterAlgo):
 
 
 class _vPowerMethod(PowerMethod):
+    """ Implementation of a seeded PowerMethod.
+
+    See SuccessiveBatchedPowerMethod for more details.
+
+    Notes
+    -----
+    Suppose A is an array of shape (N, P), that we decompose into A1, A2, ..., Ak.
+
+    Let Aij k>=j>i>=i be [Ai; Ai+1; ... Aj-1; Aj]
+
+    A = [A1; A2; A3, ... Ak], where Ai has shape (ni, p).
+        ^^^^^^^
+        A12
+        ^^^^^^^^^^^
+        A13
+
+    Let the SVD of A1 be U1, S1, V1.
+
+    Using U1 to seed the PowerMethod iteration of A12
+    """
 
     def __init__(self, v_start: ArrayType, k=None, buffer=None, max_iter=None, scoring_method=None, tol=None,
-                 full_svd: bool = False, warn: bool = False):
+                 full_svd: bool = False, factor=None, warn: bool = False):
         super().__init__(max_iter=max_iter,
                          scoring_method=scoring_method,
                          tol=tol,
+                         factor=factor,
                          lmbd=1,
                          warn=warn)
         self.v_start = v_start.rechunk({0: 'auto', 1: -1})
@@ -631,14 +469,13 @@ class _vPowerMethod(PowerMethod):
         self.full_svd = full_svd
 
     def _initialization(self, data, **kwargs):
-        self.scaled_array = data
-        self.scaled_array.fit_x(self.v_start)
-        return self.scaled_array.dot(self.v_start)
+        self.array = data
+        return self.array.dot(self.v_start)
 
     def _finalization(self, x, return_history, **kwargs) -> Union[da.core.Array,
                                                                   Tuple[da.core.Array, da.core.Array, da.core.Array]]:
         if not self.full_svd:
-            return self.scaled_array.T.dot(x)
+            return self.array.T.dot(x)
         else:
             return super()._finalization(x, return_history=False)
 
@@ -665,7 +502,8 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
        convergence <- False
        until convergence:
            i = i + 1
-           Ui, Si, Vi <- PowerMethod(A[I_rows[i], :], V_init=V{i-1})
+           Ui, Si, Vi <- PowerMethod(A[I_rows[i], :], V_init=V{i-1}), where V_init is the seed for PowerMethod instead
+                                                                      of a saussian sample or small subset of rows.
            convergence = ||Si - S{i-1}||_2
 
        return Ui, Si, Vi
@@ -673,10 +511,7 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
 
     def __init__(self, k: int = 10,
                  max_sub_iter: int = 50,
-                 scale: bool = True,
-                 center: bool = True,
                  factor: Optional[str] = 'n',
-                 std_method : str = 'normal',
                  scoring_method='q-vals',
                  f=.1,
                  lmbd=.1,
@@ -686,10 +521,9 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
                  init_row_sampling_factor: int = 5,
                  max_sub_time=1000,
                  warn: bool = False):
-        super().__init__(k=k, max_iter=max_sub_iter, scale=scale, center=center, factor=factor,
+        super().__init__(k=k, max_iter=max_sub_iter, factor=factor,
                          scoring_method=scoring_method, tol=tol, buffer=buffer, sub_svd_start=sub_svd_start,
-                         init_row_sampling_factor=init_row_sampling_factor, time_limit=max_sub_time,
-                         std_method=std_method, warn=warn)
+                         init_row_sampling_factor=init_row_sampling_factor, time_limit=max_sub_time, warn=warn)
         self.f = f
         self.history = None
         self.lmbd = lmbd
@@ -701,26 +535,26 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
         self.history.iter['sub_svd'] = []
 
     @recover_last_value
-    def svd(self, array: Optional[LargeArrayType] = None, path_to_files: Optional[Union[str, Path]] = None,
-            bed: Optional[Union[str, Path]] = None, bim: Optional[Union[str, Path]] = None,
-            fam: Optional[Union[str, Path]] = None, verbose: bool = True, return_history: bool = False, **kwargs):
+    def svd(self, array: LargeArrayType, verbose: bool = True, return_history: bool = False, **kwargs):
 
         self._reset_history()
         self.history.time['start'] = time.time()
 
-        array = self.get_array(array, path_to_files, bed, bim, fam, **kwargs)
+        self.array = da.array(array)
 
-        if not isinstance(array, ScaledArray):
-            self.scaled_array = ScaledArray(scale=self._scale, center=self._center, factor=self._factor, warn=self.warn)
-            self.scaled_array.fit(array)
-        else:
-            self.scaled_array = array
+        if self.factor == 'n':
+            self.factor = self.array.shape[0]
+        elif self.factor == 'p':
+            self.factor = self.array.shape[1]
+        elif self.factor is None:
+            self.factor = False
 
         vec_t = self.k + self.buffer
-        partitions = array_constant_partition(self.scaled_array.shape, f=self.f, min_size=vec_t)
+
+        partitions = array_constant_partition(self.array.shape, f=self.f, min_size=vec_t)
         partitions = cumulative_partition(partitions)
 
-        sub_array = self.scaled_array[partitions[0], :]
+        sub_array = self.array[partitions[0], :]
 
         if self.sub_svd_start == 'warm':
             x = sub_svd_init(sub_array,
@@ -733,17 +567,17 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
         x = sub_array.T.dot(x)
 
         for part in tqdm(partitions[:-1], disable=not verbose):
-            _PM = _vPowerMethod(v_start=x, k=self.k, buffer=self.buffer, max_iter=self.max_iter,
+            _PM = _vPowerMethod(v_start=x, k=self.k, buffer=self.buffer, max_iter=self.max_iter, factor=self.factor,
                                 scoring_method=self.scoring_method, tol=self.tol, warn=self.warn)
 
-            x = _PM.svd(self.scaled_array[part, :], verbose=False, **{'mask_nan': False, 'transpose': False})
+            x = _PM.svd(self.array[part, :], verbose=False, **{'mask_nan': False, 'transpose': False})
             self.history.iter['last_value'] = _PM.history.iter['last_value']
             self.history.iter['sub_svd'].append(self.history.iter['last_value'])
 
             if self.lmbd:
                 c_norms = np.linalg.norm(x, 2, axis=0)
                 x *= (1 - self.lmbd)
-                x += (self.lmbd*c_norms/np.sqrt(x.shape[0])) * da.random.normal(size=x.shape)
+                x += (self.lmbd * c_norms / np.sqrt(x.shape[0])) * da.random.normal(size=x.shape)
 
             if 'v-subspace' in self.scoring_method:
                 self.history.iter['V'].append(_PM.history.iter['V'][-1])
@@ -752,10 +586,10 @@ class SuccessiveBatchedPowerMethod(PowerMethod):
             self.history.acc['sub_svd_acc'].append(_PM.history.acc)
             self.history.time['iter'].append(_PM.history.time)
 
-        _PM = _vPowerMethod(v_start=x, k=self.k, buffer=self.buffer, max_iter=self.max_iter,
+        _PM = _vPowerMethod(v_start=x, k=self.k, buffer=self.buffer, max_iter=self.max_iter, factor=self.factor,
                             scoring_method=self.scoring_method, tol=self.tol, full_svd=True, warn=self.warn)
 
-        _PM.svd(self.scaled_array, verbose=False, **{'mask_nan': False, 'transpose': False})
+        _PM.svd(self.array, verbose=False, **{'mask_nan': False, 'transpose': False})
 
         self.history.iter['last_value'] = _PM.history.iter['last_value']
         self.history.iter['sub_svd'].append(self.history.iter['last_value'])

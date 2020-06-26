@@ -1,31 +1,11 @@
 import warnings
-from typing import Optional, Union
-from functools import wraps
-
 from copy import copy
+from typing import Optional, Union
+
 import numpy as np
 from dask import array as da
 
-from lmdec.array.matrix_ops import diag_dot
-
-
-def reshape_degenerate_2d_array(f):
-    @wraps(f)
-    def wrapped(self, x) -> Union[da.core.Array, np.ndarray]:
-        reshape = False
-
-        if len(x.shape) == 2 and x.shape[1] == 1:
-            reshape = True
-            x = np.squeeze(x)
-
-        r = f(self, x)
-
-        if reshape:
-            r = r[:, np.newaxis]
-
-        return r
-
-    return wrapped
+from lmdec.array.matrix_ops import diag_dot, reshape_degenerate_2d_array
 
 
 class ArrayMoment:
@@ -185,7 +165,7 @@ class ArrayMoment:
         return new_array_moment
 
 
-class ScaledArray:
+class ScaledCenterArray:
     """
     Class for efficiently scaled and centered matrix multiplications
         Columns of A have mean 0 if center = True
@@ -229,36 +209,36 @@ class ScaledArray:
         self._t_flag = False  # Implying the array is not a transposition of the original fit
 
     @classmethod
-    def fromScaledArray(cls, array: da.core.Array, scaled_array: "ScaledArray",
-                        factor: Optional[str] = None) -> "ScaledArray":
-        """ Creates a ScaledArray with the same scale and center vectors as `scaled_array` but with the underlying array
+    def fromScaledArray(cls, array: da.core.Array, scaled_array: "ScaledCenterArray",
+                        factor: Optional[str] = None) -> "ScaledCenterArray":
+        """ Creates a ScaledCenterArray with the same scale and center vectors as `scaled_array` but with the underlying array
         of `array`.
 
         Parameters
         ----------
         array : array_like, shape (?, P)
-            array to base a ScaledArray on top of.
-        scaled_array : ScaledArray, fit on array of shape (?, P)
-            ScaledArray to collect scale and center vectors from.
+            array to base a ScaledCenterArray on top of.
+        scaled_array : ScaledCenterArray, fit on array of shape (?, P)
+            ScaledCenterArray to collect scale and center vectors from.
         factor : str, optional
-            if None: new ScaledArray will have a factor_value of 1.
+            if None: new ScaledCenterArray will have a factor_value of 1.
             if 'n' factor value will come from array.shape[0]
             if 'p' factor value will come from array.shape[1]
 
         Returns
         -------
-        scaled_array : ScaledArray
-            ScaledArray with underlying array as `array` and underlying moments from `array_moment`
+        scaled_array : ScaledCenterArray
+            ScaledCenterArray with underlying array as `array` and underlying moments from `array_moment`
         """
-        if (scaled_array.scale and array.shape[1] != len(scaled_array.scale_vector))\
+        if (scaled_array.scale and array.shape[1] != len(scaled_array.scale_vector)) \
                 or (scaled_array.center and array.shape[1] != len(scaled_array.center_vector)):
-            array_moment_shape = len(scaled_array.scale_vector) if scaled_array.scale is not None\
+            array_moment_shape = len(scaled_array.scale_vector) if scaled_array.scale is not None \
                 else len(scaled_array.center_vector)
             raise ValueError(f'expected array of shape {array.shape} to have matching second dimension '
                              f'with array_moment shape, {array_moment_shape}')
 
-        sa = ScaledArray(scale=scaled_array.scale, center=scaled_array.center, factor=factor,
-                         std_dist=scaled_array._std_dist, warn=scaled_array._warn)
+        sa = ScaledCenterArray(scale=scaled_array.scale, center=scaled_array.center, factor=factor,
+                               std_dist=scaled_array._std_dist, warn=scaled_array._warn)
         sa._array = array
         sa._array_moment = ArrayMoment(a=array, std_dist=scaled_array._std_dist, warn=scaled_array._warn)
         if sa.factor:
@@ -292,6 +272,7 @@ class ScaledArray:
         if len(a.shape) != 2:
             raise ValueError('Cannot fit non-2D array.')
 
+        # if not isinstance(a, (da.core.Array, lmdec.array.stacked.StackedArray)):
         self._array = da.array(a)
 
         self._array_moment = ArrayMoment(self._array, std_dist=self._std_dist, warn=self._warn)
@@ -418,7 +399,7 @@ class ScaledArray:
         return y
 
     @property
-    def T(self) -> "ScaledArray":
+    def T(self) -> "ScaledCenterArray":
         if self._t_cache is None:
             self._t_cache = self._transpose()
             self._t_cache._t_cache = self
@@ -463,7 +444,7 @@ class ScaledArray:
             pass
         return new_scaled_array
 
-    def _transpose(self) -> "ScaledArray":
+    def _transpose(self) -> "ScaledCenterArray":
         t_scaled_array = copy(self)
         t_scaled_array._t_flag = not self._t_flag
         return t_scaled_array
@@ -496,7 +477,7 @@ class ScaledArray:
 
         """
         try:
-            # self._array_moment.vector_width is not set until ScaledArray is fit_x.
+            # self._array_moment.vector_width is not set until ScaledCenterArray is fit_x.
             if len(x.shape) == 2 and self._array_moment.vector_width == x.shape[1]:
                 scale_matrix = self._array_moment.sym_scale_matrix if sym else self._array_moment.scale_matrix
                 return da.multiply(scale_matrix, x)
@@ -594,7 +575,7 @@ class ScaledArray:
             return self._array.chunks
 
     def __getitem__(self, item):
-        """Creates and Returns a new ScaledArray, with the appropriate underlying array, with the proper state
+        """Creates and Returns a new ScaledCenterArray, with the appropriate underlying array, with the proper state
 
         Parameters
         ----------
@@ -602,7 +583,7 @@ class ScaledArray:
 
         Returns
         -------
-        sub_array : ScaledArray
+        sub_array : ScaledCenterArray
 
         Notes
         -----
@@ -618,11 +599,11 @@ class ScaledArray:
         if isinstance(item, tuple) and len(item) > 2:
             raise IndexError('too many indices for array')
 
-        new_scaled_array = ScaledArray(scale=self.scale,
-                                       center=self.center,
-                                       factor=self.factor,
-                                       std_dist=self._std_dist,
-                                       warn=self._warn)
+        new_scaled_array = ScaledCenterArray(scale=self.scale,
+                                             center=self.center,
+                                             factor=self.factor,
+                                             std_dist=self._std_dist,
+                                             warn=self._warn)
         if self._t_flag:
             new_scaled_array.fit(self._array.T[item])
         else:

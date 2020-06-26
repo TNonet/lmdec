@@ -1,8 +1,10 @@
-import pytest
-import numpy as np
 import dask.array as da
+import numpy as np
+import pytest
+import utils_tests
+from hypothesis import given, settings
 
-from lmdec.array.matrix_ops import diag_dot, subspace_to_SVD, subspace_to_V
+from lmdec.array.matrix_ops import diag_dot, subspace_to_SVD, subspace_to_V, vector_to_sparse
 from lmdec.array.metrics import subspace_dist
 
 decimals = 5
@@ -140,3 +142,19 @@ def test_subspace_to_V_case1():
             V2 = subspace_to_V(U, A, k=min(N, P))
 
             np.testing.assert_almost_equal(subspace_dist(V1, V2, S), 0, decimal=decimals)
+
+
+@given(n_index_axis=utils_tests.get_vector_index_axis())
+@settings(deadline=None)
+def test_vector_to_sparse(n_index_axis):
+    n, index, axis = n_index_axis
+
+    vector = np.ones(n)
+
+    coo_array = vector_to_sparse(vector, index, axis)
+
+    if axis == 0:
+        np.testing.assert_array_equal(np.diag(vector)[index, :], coo_array.compute().todense())
+    else:
+        np.testing.assert_array_equal(np.diag(vector)[:, index], coo_array.compute().todense())
+
