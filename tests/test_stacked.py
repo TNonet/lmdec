@@ -10,7 +10,7 @@ from lmdec.array.stacked import StackedArray
 
 from functools import reduce
 
-import utils_tests
+import utils_hypothesis
 
 
 def test_non_stacked():
@@ -25,7 +25,7 @@ def test_bad_stacked_types():
 
 def test_bad_stacked_shapes():
     with pytest.raises(ValueError):
-        StackedArray([da.random.random(size=(2, )), da.random.random(size=(3, ))])
+        StackedArray([da.random.random(size=(2,)), da.random.random(size=(3,))])
 
 
 def test_underlying_arrays():
@@ -43,7 +43,7 @@ def test_reduce_arrays_size2():
     x1 = da.random.random(size=(4,))
     x2 = da.random.random(size=(4,))
 
-    x = x1+x2
+    x = x1 + x2
 
     for tree_reduce in [True, False]:
         sa = StackedArray([x1, x2], tree_reduce=tree_reduce)
@@ -55,7 +55,7 @@ def test_reduce_arrays_size3():
     x1 = da.random.random(size=(4,))
     x2 = da.random.random(size=(4,))
     x3 = da.random.random(size=(4,))
-    x = x1+x2+x3
+    x = x1 + x2 + x3
 
     for tree_reduce in [True, False]:
         sa = StackedArray([x1, x2, x3], tree_reduce=tree_reduce)
@@ -137,9 +137,8 @@ def test_dot_2D_1D(shape):
     np.testing.assert_array_almost_equal(sa.dot(y), sa.array.dot(y), decimal=12)
 
 
-
-@given(shapes=utils_tests.get_boardcastable_arrays_shapes(base_min_dims=2, base_max_dims=2,
-                                                          broadcast_min_dims=1, broadcast_max_dims=2))
+@given(shapes=utils_hypothesis.get_boardcastable_arrays_shapes(base_min_dims=2, base_max_dims=2,
+                                                               broadcast_min_dims=1, broadcast_max_dims=2))
 def test_dot_non_consistent_shape(shapes):
     assume(all(max(shape) > 1 for shape in shapes))
     sa = StackedArray([da.random.random(shape) for shape in shapes])
@@ -177,7 +176,7 @@ def test_mean_consistent_shape():
         np.testing.assert_array_almost_equal(sa.mean(axis=axis), sa.array.mean(axis=axis))
 
 
-@given(shapes=utils_tests.get_boardcastable_arrays_shapes())
+@given(shapes=utils_hypothesis.get_boardcastable_arrays_shapes())
 def test_mean_non_consistent_shape(shapes):
     sa = StackedArray([da.random.random(shape) for shape in shapes])
     for axis in [None, -1, *list(list(range(x)) for x in range(len(sa.shape)))]:
@@ -188,13 +187,13 @@ def test_mean_non_consistent_shape(shapes):
 def test___getitem__():
     sa = StackedArray([da.random.random(size=(10, 10)) for _ in range(7)])
 
-    np.testing.assert_array_almost_equal(sa[0, 0], sa.array[0, 0],  decimal=12)
+    np.testing.assert_array_almost_equal(sa[0, 0], sa.array[0, 0], decimal=12)
     np.testing.assert_array_almost_equal(sa[0, :], sa.array[0, :], decimal=12)
     np.testing.assert_array_almost_equal(sa[:, 0], sa.array[:, 0], decimal=12)
     np.testing.assert_array_almost_equal(sa[:, :], sa.array[:, :], decimal=12)
 
 
-@given(shapes_indicies=utils_tests.get_boardcastable_arrays_shapes_and_indices())
+@given(shapes_indicies=utils_hypothesis.get_boardcastable_arrays_shapes_and_indices())
 def test__getitem__non_consistent_shape(shapes_indicies):
     shapes, indices, shape = shapes_indicies
     sa = StackedArray([da.random.random(shape) for shape in shapes])
@@ -218,7 +217,6 @@ def test_reshape():
     sa = StackedArray([da.random.random(size=(4, 4)) for _ in range(7)])
 
     for new_shape in [(16,), (2, 8), (4, 4), (8, 2)]:
-
         sa1 = sa.reshape(new_shape)
 
         assert sa1.shape == new_shape
@@ -236,7 +234,7 @@ def test_fallback_methods():
         np.testing.assert_array_almost_equal(sa.std(axis=axis), sa.array.std(axis=axis), decimal=12)
         np.testing.assert_array_almost_equal(sa.mean(axis=axis), sa.array.mean(axis=axis), decimal=12)
         np.testing.assert_array_almost_equal(sa.max(axis=axis), sa.array.max(axis=axis), decimal=12)
-        np.testing.assert_array_almost_equal(sa.min(axis=axis), sa.array.min(axis=axis),  decimal=12)
+        np.testing.assert_array_almost_equal(sa.min(axis=axis), sa.array.min(axis=axis), decimal=12)
 
 
 def test_StackedArray_of_StackedArrays():

@@ -8,7 +8,7 @@ from lmdec.array.chained import ChainedArray
 
 from functools import reduce
 
-import utils_tests
+import utils_hypothesis
 
 
 def test_non_stacked():
@@ -73,7 +73,7 @@ def test_reduce_arrays_sizeN():
             np.testing.assert_array_almost_equal(sa, array, decimal=8)
 
 
-@given(shapes=utils_tests.get_chainable_array_shapes())
+@given(shapes=utils_hypothesis.get_chainable_array_shapes())
 def test_T(shapes):
     assume(1 not in shapes[0])
     sa = ChainedArray([da.random.random(size=shape) for shape in shapes])
@@ -82,7 +82,7 @@ def test_T(shapes):
     np.testing.assert_array_almost_equal(sa, sa.T.T)
 
 
-@given(shapes=utils_tests.get_chainable_array_shapes(base_min_dims=2, chain_min_dims=2))
+@given(shapes=utils_hypothesis.get_chainable_array_shapes(base_min_dims=2, chain_min_dims=2))
 def test_dot_constant_shape_2D(shapes):
     assume(1 not in shapes[0])
     sa = ChainedArray([da.random.random(size=shape) for shape in shapes])
@@ -92,7 +92,7 @@ def test_dot_constant_shape_2D(shapes):
     np.testing.assert_array_almost_equal(sa.dot(y), sa.array.dot(y), decimal=10)
 
 
-@given(shapes=utils_tests.get_chainable_array_shapes(base_min_dims=1, chain_min_dims=2))
+@given(shapes=utils_hypothesis.get_chainable_array_shapes(base_min_dims=1, chain_min_dims=2))
 def test_dot_constant_shape_1D_2D(shapes):
     assume(1 not in shapes[0])
     sa = ChainedArray([da.random.random(size=shape) for shape in shapes])
@@ -102,7 +102,7 @@ def test_dot_constant_shape_1D_2D(shapes):
     np.testing.assert_array_almost_equal(sa.dot(y), sa.array.dot(y), decimal=10)
 
 
-@given(shapes=utils_tests.get_chainable_array_shapes(base_min_dims=1, chain_min_dims=2))
+@given(shapes=utils_hypothesis.get_chainable_array_shapes(base_min_dims=1, chain_min_dims=2))
 def test_dot_constant_shape_1D_2D(shapes):
     assume(1 not in shapes[0])
     sa = ChainedArray([da.random.random(size=shape) for shape in shapes])
@@ -112,7 +112,7 @@ def test_dot_constant_shape_1D_2D(shapes):
     np.testing.assert_array_almost_equal(sa.dot(y), sa.array.dot(y), decimal=10)
 
 
-@given(shapes=utils_tests.get_chainable_array_shapes(base_min_dims=1, chain_min_dims=2))
+@given(shapes=utils_hypothesis.get_chainable_array_shapes(base_min_dims=1, chain_min_dims=2))
 def test_dot_transpose_dot(shapes):
     assume(1 not in shapes[0])
     sa = ChainedArray([da.random.random(size=shape) for shape in shapes])
@@ -123,7 +123,7 @@ def test_dot_transpose_dot(shapes):
         np.testing.assert_array_almost_equal(sa.T.dot(y), sa.array.T.dot(y), decimal=10)
 
 
-@given(shapes=utils_tests.get_chainable_array_shapes(base_min_dims=2, chain_min_dims=2))
+@given(shapes=utils_hypothesis.get_chainable_array_shapes(base_min_dims=2, chain_min_dims=2))
 @settings(deadline=None)
 def test___getitem__shape_2D(shapes):
     sa = ChainedArray([da.random.random(size=shape) for shape in shapes])
@@ -133,7 +133,7 @@ def test___getitem__shape_2D(shapes):
     np.testing.assert_array_almost_equal(sa[:, :], sa.array[:, :])
 
 
-@given(shapes_indicies=utils_tests.get_chainable_arrays_shapes_and_indices(max_chain=3))
+@given(shapes_indicies=utils_hypothesis.get_chainable_arrays_shapes_and_indices(max_chain=3))
 @settings(deadline=None, max_examples=10)
 def test__getitem__non_consistent_shape(shapes_indicies):
     shapes, indices, shape = shapes_indicies
