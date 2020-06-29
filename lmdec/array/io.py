@@ -70,6 +70,11 @@ def load_plink_array(path_to_plink_files: Optional[Union[str, Path]] = None,
     return array
 
 
+def save_and_load_array(array, file: Optional[str] = None):
+    pass
+
+
+
 def issparse(array: da.core.Array) -> bool:
     """ Tests to see if the underlying array type of a Dask Array is sparse.COO
 
@@ -105,10 +110,10 @@ def sort_files_by_int(x: Iterable[str]) -> List[str]:
     return list(sorted(x, key=index))
 
 
-def walk_one_level(top: str, ignore_hidden: bool = True) -> Tuple[List[str], List[str]]:
+def walk_one_level(top: Path, ignore_hidden: bool = True) -> Tuple[List[str], List[str]]:
     file_list = []
     dir_list = []
-    for (_, dirs, files) in os.walk(top):
+    for (_, dirs, files) in os.walk(str(top)):
         file_list.extend(files)
         dir_list.extend(dirs)
         break
@@ -120,72 +125,83 @@ def walk_one_level(top: str, ignore_hidden: bool = True) -> Tuple[List[str], Lis
     return dir_list, file_list
 
 
-def load_sprase_array(file: str, **kwargs):
+def load_sprase_array(file: Path, **kwargs):
     _, files = walk_one_level(file)
 
     coords = [file for file in files if file.startswith('coords')][0]
     shape = [file for file in files if file.startswith('shape')][0]
     data = [file for file in files if file.startswith('data')][0]
 
-    shape = load_array_from_disk('/'.join([file, shape]), **kwargs)
-    shape = tuple(int(i) for i in shape)
+    shape = load_array_from_disk(Path(file, shape), **kwargs)
 
-    array = sparse.COO(coords=load_array_from_disk('/'.join([file, coords]), **kwargs),
-                       data=load_array_from_disk('/'.join([file, data]), **kwargs),
+    if shape.shape == ():
+        shape = (int(shape), )
+    else:
+        shape = tuple(int(i) for i in shape)
+
+    if coords.endswith('.txt'):
+        coords = load_dense_array(Path(file, coords), ndmin=len(shape))
+    else:
+        coords = load_dense_array(Path(file, coords), **kwargs)
+
+    array = sparse.COO(coords=coords,
+                       data=load_dense_array(Path(file, data), **kwargs),
                        shape=shape,
                        has_duplicates=False, cache=True)
 
     return da.from_array(array)
 
 
-def load_stacked_array(file: str, **kwargs):
+def load_stacked_array(file: Path, **kwargs):
     dirs, files = walk_one_level(file)
     sub_arrays = dirs + files
     sub_arrays = sort_files_by_int(sub_arrays)
-    return StackedArray([load_array_from_disk('/'.join([file, sub_array]), **kwargs) for sub_array in sub_arrays])
+    return StackedArray([load_array_from_disk(Path(file, sub_array), **kwargs) for sub_array in sub_arrays])
 
 
-def load_chained_array(file: str, **kwargs):
+def load_chained_array(file: Path, **kwargs):
     dirs, files = walk_one_level(file)
     sub_arrays = dirs + files
     sub_arrays = sort_files_by_int(sub_arrays)
-    return ChainedArray([load_array_from_disk('/'.join([file, sub_array]), **kwargs) for sub_array in sub_arrays])
+    return ChainedArray([load_array_from_disk(Path(file, sub_array), **kwargs) for sub_array in sub_arrays])
 
 
-def load_dense_array(file: str, **kwargs):
-    if file.endswith('.zarr'):
-        return da.from_zarr(file, **kwargs)
-    elif file.endswith('.hdf5'):
+def load_dense_array(file: Path, **kwargs):
+    if file.suffix == '.zarr':
+        return da.from_zarr(str(file), **kwargs)
+    elif file.suffix == '.hdf5':
         raise NotImplementedError
-    elif file.endswith('.txt'):
-        return np.loadtxt(file, **kwargs)
-    elif file.endswith('.npy'):
-        return np.load(file, **kwargs)
+    elif file.suffix == '.txt':
+        return np.loadtxt(str(file), **kwargs)
+    elif file.suffix == '.npy':
+        return np.load(str(file), **kwargs)
     else:
         raise ValueError(f'{file} does not reference an load-able array')
 
 
-def load_array_from_disk(path_to_array: str, **kwargs):
+def load_array_from_disk(path_to_array: Union[str, Path], **kwargs):
+    path_to_array = Path(path_to_array)
     if os.path.isdir(path_to_array):
-        if path_to_array.endswith('sparse'):
+        if str(path_to_array).endswith('sparse'):
             return load_sprase_array(path_to_array, **kwargs)
-        elif path_to_array.endswith('stacked'):
+        elif str(path_to_array).endswith('stacked'):
             return load_stacked_array(path_to_array, **kwargs)
-        elif path_to_array.endswith('chained'):
+        elif str(path_to_array).endswith('chained'):
             return load_chained_array(path_to_array, **kwargs)
-        elif path_to_array.endswith('npy_stack'):
+        elif str(path_to_array).endswith('npy_stack'):
             raise NotImplementedError('npy_stack is not implemented.')
-        elif path_to_array.endswith('.zarr'):
+        elif str(path_to_array).endswith('.zarr'):
             return load_dense_array(path_to_array, **kwargs)
         else:
             dirs, files = walk_one_level(path_to_array)
             if len(dirs) == 1:
-                return load_array_from_disk('/'.join([path_to_array, dirs[0]]), **kwargs)
+                return load_array_from_disk(Path(path_to_array, dirs[0]), **kwargs)
     else:
         return load_dense_array(path_to_array, **kwargs)
 
 
-def save_array(array: da.core.Array, file, dense_file_format: str = 'zarr', sparse_file_format: str = 'txt') -> None:
+def save_array(array: da.core.Array, file: Union[str, Path], dense_file_format: str = 'zarr',
+               sparse_file_format: str = 'txt') -> None:
     """ Save a Stacked, Chained, or Dask Array, with a tree file format, if necssary.
 
     Parameters
@@ -241,9 +257,15 @@ def save_array(array: da.core.Array, file, dense_file_format: str = 'zarr', spar
 
     if type(array) == da.core.Array:
         if issparse(array):
+            if not file.endswith('sparse'):
+                os.mkdir(file)
+                file = "/".join([file, 'sparse'])
             array = array.compute()
             save_sparse_array(array, path=file, file_format=sparse_file_format)
         else:
+            if not file.endswith('array'):
+                os.mkdir(file)
+                file = "/".join([file, 'array'])
             save_dense_array(array, file=file, file_format=dense_file_format)
     else:
         os.mkdir(file)
@@ -277,7 +299,7 @@ def save_array(array: da.core.Array, file, dense_file_format: str = 'zarr', spar
                                  f', but got type {type(array)}')
 
 
-def save_sparse_array(array: sparse._coo.core.COO, path: str, file_format: str = 'npy'):
+def save_sparse_array(array: sparse._coo.core.COO, path: Path, file_format: str = 'npy'):
     """
     Notes
     -----
@@ -298,7 +320,8 @@ def save_sparse_array(array: sparse._coo.core.COO, path: str, file_format: str =
     save_dense_array(array.shape, file=path + '/shape', file_format=file_format)
 
 
-def save_dense_array(array: Union[da.core.Array, np.ndarray, Iterable], file: str, file_format: str = 'zarr', **kwargs):
+def save_dense_array(array: Union[da.core.Array, np.ndarray, Iterable], file: Path, file_format: str = 'zarr',
+                     **kwargs):
     file_formats = ['zarr', 'hdf5', 'npy', 'tiledb', 'txt', 'npy_stack']
 
     if file_format not in file_formats:
