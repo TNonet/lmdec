@@ -122,7 +122,8 @@ class StackedArray(dask.array.core.Array):
         arrays = list(arrays)
 
         if any(not isinstance(x, (dask.array.core.Array, np.ndarray)) for x in arrays):
-            raise ValueError(f"expected Iterable of dask.array.core.Array.")
+            raise ValueError(f"expected Iterable of dask.array.core.Array, "
+                             f"but got types {set(type(x) for x in arrays)}")
 
         if tree_reduce:
             reduce = tree_reduction
@@ -268,8 +269,13 @@ class StackedArray(dask.array.core.Array):
         return f"{StackedArray.__name__}({stacked_arrays})"
 
     def rechunk(self, chunks='auto', threshold=None, block_size_limit=None) -> "StackedArray":
-        return StackedArray((array.rechunk(chunks, threshold, block_size_limit) for array in self.arrays),
-                            tree_reduce=self.tree_reduce)
+        arrays = []
+        for array in self.arrays:
+            if array.ndim == 1 or max(array.shape) == np.product(array.shape):
+                arrays.append(array)
+            else:
+                arrays.append(array.rechunk(chunks, threshold, block_size_limit))
+        return StackedArray(arrays, tree_reduce=self.tree_reduce)
 
     def reshape(self, *shape) -> "StackedArray":
         raise NotImplementedError
