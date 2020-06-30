@@ -60,6 +60,8 @@ def load_plink_array(path_to_plink_files: Optional[Union[str, Path]] = None,
         array = da.from_array(array)
     except AttributeError:
         raise ValueError('Uninterpretable array.')
+    except ValueError:
+        pass
 
     if len(array.shape) != 2:
         raise ValueError("Must be a 2-D array")

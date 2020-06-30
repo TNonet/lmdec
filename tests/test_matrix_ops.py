@@ -1,7 +1,7 @@
 import dask.array as da
 import numpy as np
 import pytest
-import utils_tests
+import utils_hypothesis
 from hypothesis import given, settings
 
 from lmdec.array.matrix_ops import diag_dot, subspace_to_SVD, subspace_to_V, vector_to_sparse
@@ -144,7 +144,7 @@ def test_subspace_to_V_case1():
             np.testing.assert_almost_equal(subspace_dist(V1, V2, S), 0, decimal=decimals)
 
 
-@given(n_index_axis=utils_tests.get_vector_index_axis())
+@given(n_index_axis=utils_hypothesis.get_vector_index_axis())
 @settings(deadline=None)
 def test_vector_to_sparse(n_index_axis):
     n, index, axis = n_index_axis
