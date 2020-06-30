@@ -1,5 +1,4 @@
-import typing
-from typing import Tuple, Union, Callable
+from typing import Tuple, Union, Callable, Optional
 
 import dask.array as da
 import numpy as np
@@ -8,9 +7,6 @@ from lmdec.array.random import array_split
 from lmdec.array.transform import acc_format_svd
 from lmdec.array.types import ArrayType, LargeArrayType
 from lmdec.array.wrappers.time_logging import time_param_log
-
-if typing.TYPE_CHECKING:
-    from lmdec.array.scaled import ScaledArray
 
 
 def approx_array_function(array_func: Callable,
@@ -110,10 +106,11 @@ def subspace_dist(vi: ArrayType,
 
 
 @time_param_log
-def rmse_k(array: Union[LargeArrayType, "ScaledArray"],
+def rmse_k(array: LargeArrayType,
            u: ArrayType,
            s: ArrayType,
            format_us: bool = True,
+           factor: Optional[int] = None,
            log: int = 0) -> Union[float, Tuple[float, dict]]:
     """Computes RMSE_k Norm
 
@@ -127,6 +124,7 @@ def rmse_k(array: Union[LargeArrayType, "ScaledArray"],
         Top K right singular vectors of array
     s : array_like, shape (K, )
         Top K singular values of array
+    factor: int, optional
     format_us : bool
                 Whether or not to format U, S
 
@@ -156,10 +154,9 @@ def rmse_k(array: Union[LargeArrayType, "ScaledArray"],
     if format_us:
         u, s = acc_format_svd(u, s, array.shape, square=False)
 
-    try:
-        aatx = array.sym_mat_mult(u)
-    except AttributeError:
-        aatx = array.dot(array.T.dot(u))
+    aatx = array.dot(array.T.dot(u))
+    if factor is not None:
+        aatx = aatx / factor
 
     acc = np.linalg.norm(aatx - u.dot(s), ord='fro')
     acc /= np.sqrt(n*k*p)

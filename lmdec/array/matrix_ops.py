@@ -1,7 +1,10 @@
-import time
-from typing import Union, Optional, Tuple, TYPE_CHECKING
+from functools import wraps
+from typing import Union, Optional, Tuple, TYPE_CHECKING, Iterable, List
 
+import dask
 import numpy as np
+import sparse
+from dask import array as da
 from dask.array import broadcast_to
 from dask.array.linalg import tsqr
 
@@ -10,13 +13,13 @@ from lmdec.array.wrappers.array_serialization import array_serializer
 from lmdec.array.wrappers.time_logging import time_param_log
 
 if TYPE_CHECKING:
-    from lmdec.array.scaled import ScaledArray
+    from lmdec.array.types import LargeArrayType
 
 
 @time_param_log
 @array_serializer('x')
 def subspace_to_SVD(x: ArrayType,
-                    a: Optional["ScaledArray"] = None,
+                    a: Optional["LargeArrayType"] = None,
                     k: Optional[int] = None,
                     full_v: bool = False,
                     sqrt_s: bool = True,
@@ -77,9 +80,6 @@ def subspace_to_SVD(x: ArrayType,
     if k:
         U, S, V = svd_to_trunc_svd(U, S, V, k=k)
 
-    # U = U.rechunk({0: 'auto', 1: -1})
-    # V = V.rechunk({0: 'auto', 1: -1})
-
     if log:
         return U, S, V, flog
     else:
@@ -87,7 +87,7 @@ def subspace_to_SVD(x: ArrayType,
 
 
 def subspace_to_V(x: ArrayType,
-                  a: Optional["ScaledArray"] = None,
+                  a: Optional["LargeArrayType"] = None,
                   k: Optional[int] = None) -> ArrayType:
 
     x_t = a.T.dot(x)
@@ -97,7 +97,6 @@ def subspace_to_V(x: ArrayType,
     if k:
         V = svd_to_trunc_svd(v=V, k=k)
     return V
-
 
 
 def svd_to_trunc_svd(u: Optional[ArrayType] = None,
@@ -197,3 +196,97 @@ def diag_dot(diag_array, x, return_diag=False):
         return d
     else:
         return np.multiply(d, x)
+
+
+def reshape_degenerate_2d_array(f):
+    @wraps(f)
+    def wrapped(self, x) -> Union[da.core.Array, np.ndarray]:
+        reshape = False
+
+        if len(x.shape) == 2 and x.shape[1] == 1:
+            reshape = True
+            x = np.squeeze(x)
+
+        r = f(self, x)
+
+        if reshape:
+            r = r[:, np.newaxis]
+
+        return r
+
+    return wrapped
+
+
+def vector_to_sparse(vector: Union[np.ndarray, dask.array.core.Array], item: slice, axis: int = 0):
+    """
+
+    Parameters
+    ----------
+    vector : array_like, ndim 1
+        Vector representing a diagonal matrix.
+
+        [l0, l1, l2, ..., lk-1] = [[l0, 0, ..., 0]
+                                   [0, l1, ..., 0]
+                                   ...
+                                   [0, 0,  ..., lk-1]]
+
+    item : slice
+        index slice for indexing into an array
+    axis : int
+        which axis to apply item too
+
+    Returns
+    -------
+
+    """
+    if vector.ndim != 1:
+        raise ValueError(f'expected 1D array, got {vector.ndim}D array')
+    if not isinstance(item, slice):
+        raise ValueError(f'expected item of type slice, got {type(item)}')
+    if axis not in [0, 1]:
+        raise NotImplementedError('Only implemented for 2D arrays. Axis must be 1 or 2')
+
+    n0 = p0 = len(vector)
+    sparse_data = vector[item]
+    n1 = p1 = len(sparse_data)
+    non_index_axis = da.arange(n0)[item]
+    indexed_axis = da.arange(n1)
+
+    if axis == 0:
+        coords = [indexed_axis, non_index_axis]
+        shape = (n1, p0)
+    else:
+        coords = [non_index_axis, indexed_axis]
+        shape = (n0, p1)
+
+    return da.from_array(sparse.COO(coords=coords, data=sparse_data, shape=shape)).persist()
+
+
+def expand_arrays(arrays: Iterable[dask.array.core.Array]) -> List[dask.array.core.Array]:
+    """ Expands arrays, if necessary, to have consistent number of axis by adding degenerate arrays.
+
+    Parameters
+    ----------
+    arrays : iterable of dask arrays with broadcast-able shapes
+
+    Returns
+    -------
+    const_arrays : list of dask arrays with broadcast-able dimensions
+
+    Examples
+    --------
+    >>>expand_arrays([da.ones((10, 7)), da.ones((7, ))])
+    [da.ones((10, 7)), da.ones((1, 7))]
+    """
+
+    arrays = list(arrays)
+    max_dimns = max(len(array.shape) for array in arrays)
+
+    const_arrays = []
+    for array in arrays:
+        current_dimns = len(array.shape)
+        if current_dimns < max_dimns:
+            array = array.reshape(*[1] * (max_dimns - current_dimns), *array.shape)
+        const_arrays.append(array)
+
+    return const_arrays

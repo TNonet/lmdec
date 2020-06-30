@@ -1,10 +1,8 @@
-from copy import deepcopy
-
+import dask.array as da
 import numpy as np
 import pytest
-import dask.array as da
-from lmdec.array.scaled import ScaledArray, ArrayMoment
-from lmdec.array.random import array_constant_partition
+
+from lmdec.array.scaled_legacy import ArrayMoment, ScaledCenterArray
 
 num_run = 10
 
@@ -18,7 +16,7 @@ def test_ScaledArray_array():
     for s in [True, False]:
         for c in [True, False]:
             for f in [None, 'n', 'p']:
-                sarray = ScaledArray(scale=s, center=c, factor=f)
+                sarray = ScaledCenterArray(scale=s, center=c, factor=f)
                 sarray.fit(da.array(array))
 
                 if c:
@@ -61,7 +59,7 @@ def test_ScaledArray_sym_mat_mult():
                                 # x = A'Ax
                                 result = array.dot(array.T.dot(x))/f
                                 assert result.shape == x.shape
-                                sarray = ScaledArray(scale=False, center=False, factor=factor)
+                                sarray = ScaledCenterArray(scale=False, center=False, factor=factor)
                                 sarray.fit(da.array(array), x=fit_x)
                                 np.testing.assert_array_equal(result, sarray.sym_mat_mult(x))
 
@@ -70,7 +68,7 @@ def test_ScaledArray_sym_mat_mult():
                                 b_array = array.dot(std)
                                 result = b_array.dot(b_array.T.dot(x))/f
                                 assert result.shape == x.shape
-                                sarray = ScaledArray(scale=True, center=False, factor=factor)
+                                sarray = ScaledCenterArray(scale=True, center=False, factor=factor)
                                 sarray.fit(da.array(array), x=fit_x)
                                 np.testing.assert_array_almost_equal(result, sarray.sym_mat_mult(x))
 
@@ -78,14 +76,14 @@ def test_ScaledArray_sym_mat_mult():
                                 # B = (A - U)
                                 b_array = array - mu
                                 result = b_array.dot(b_array.T.dot(x))/f
-                                sarray = ScaledArray(scale=False, center=True, factor=factor)
+                                sarray = ScaledCenterArray(scale=False, center=True, factor=factor)
                                 sarray.fit(da.array(array), x=fit_x)
                                 np.testing.assert_array_almost_equal(result, sarray.sym_mat_mult(x))
 
                                 # With Center and  Scale:
                                 # (A - U)'D'D(A - U)x
                                 result = (array - mu).dot(std).dot(std).dot((array - mu).T.dot(x))/f
-                                sarray = ScaledArray(scale=True, center=True, factor=factor)
+                                sarray = ScaledCenterArray(scale=True, center=True, factor=factor)
                                 sarray.fit(da.array(array), x=fit_x)
                                 np.testing.assert_array_almost_equal(result, sarray.sym_mat_mult(x))
 
@@ -106,7 +104,7 @@ def test_ScaledArray_different_x():
                         # With No Scale or Center
                         # x = A'Ax
                         result = array.dot(array.T.dot(x2))
-                        sarray = ScaledArray(scale=False, center=False)
+                        sarray = ScaledCenterArray(scale=False, center=False)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_equal(result, sarray.sym_mat_mult(x2))
 
@@ -114,7 +112,7 @@ def test_ScaledArray_different_x():
                         # B = AD
                         b_array = array.dot(std)
                         result = b_array.dot(b_array.T.dot(x2))
-                        sarray = ScaledArray(scale=True, center=False)
+                        sarray = ScaledCenterArray(scale=True, center=False)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.sym_mat_mult(x2))
 
@@ -122,14 +120,14 @@ def test_ScaledArray_different_x():
                         # B = (A - U)
                         b_array = array - mu
                         result = b_array.dot(b_array.T.dot(x2))
-                        sarray = ScaledArray(scale=False, center=True)
+                        sarray = ScaledCenterArray(scale=False, center=True)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.sym_mat_mult(x2))
 
                         # With Center and  Scale:
                         # (A - U)'D'D(A - U)x
                         result = (array - mu).dot(std).dot(std).dot((array - mu).T.dot(x2))
-                        sarray = ScaledArray(scale=True, center=True)
+                        sarray = ScaledCenterArray(scale=True, center=True)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.sym_mat_mult(x2))
 
@@ -149,7 +147,7 @@ def test_ScaledArray_dot():
                         # With No Scale or Center
                         # x = A'Ax
                         result = array.dot(x)
-                        sarray = ScaledArray(scale=False, center=False)
+                        sarray = ScaledCenterArray(scale=False, center=False)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.dot(x))
 
@@ -157,7 +155,7 @@ def test_ScaledArray_dot():
                         # B = AD
                         b_array = array.dot(std)
                         result = b_array.dot(x)
-                        sarray = ScaledArray(scale=True, center=False)
+                        sarray = ScaledCenterArray(scale=True, center=False)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.dot(x))
 
@@ -165,7 +163,7 @@ def test_ScaledArray_dot():
                         # B = (A - U)
                         b_array = array - mu
                         result = b_array.dot(x)
-                        sarray = ScaledArray(scale=False, center=True)
+                        sarray = ScaledCenterArray(scale=False, center=True)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.dot(x))
 
@@ -173,7 +171,7 @@ def test_ScaledArray_dot():
                         # (A - U)'D'D(A - U)x
                         b_array = (array - mu).dot(std)
                         result = b_array.dot(x)
-                        sarray = ScaledArray(scale=True, center=True)
+                        sarray = ScaledCenterArray(scale=True, center=True)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.dot(x))
 
@@ -193,7 +191,7 @@ def test_ScaledArray_T_dot():
                         # With No Scale or Center
                         # x = A'Ax
                         result = array.T.dot(x)
-                        sarray = ScaledArray(scale=False, center=False)
+                        sarray = ScaledCenterArray(scale=False, center=False)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.T.dot(x))
 
@@ -201,7 +199,7 @@ def test_ScaledArray_T_dot():
                         # B = AD
                         b_array = array.dot(std).T
                         result = b_array.dot(x)
-                        sarray = ScaledArray(scale=True, center=False)
+                        sarray = ScaledCenterArray(scale=True, center=False)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.T.dot(x))
 
@@ -209,7 +207,7 @@ def test_ScaledArray_T_dot():
                         # B = (A - U)
                         b_array = (array - mu).T
                         result = b_array.dot(x)
-                        sarray = ScaledArray(scale=False, center=True)
+                        sarray = ScaledCenterArray(scale=False, center=True)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.T.dot(x))
 
@@ -217,7 +215,7 @@ def test_ScaledArray_T_dot():
                         # (A - U)'D'D(A - U)x
                         b_array = (array - mu).dot(std).T
                         result = b_array.dot(x)
-                        sarray = ScaledArray(scale=True, center=True)
+                        sarray = ScaledCenterArray(scale=True, center=True)
                         sarray.fit(da.array(array), x=fit_x)
                         np.testing.assert_array_almost_equal(result, sarray.T.dot(x))
 
@@ -225,7 +223,7 @@ def test_ScaledArray_T_dot():
 def test_array_tranpose_tranpose():
     array = da.array(np.random.rand(7, 10))
     x = da.array(np.random.rand(10, 5))
-    sarray = ScaledArray(scale=True, center=True)
+    sarray = ScaledCenterArray(scale=True, center=True)
     sarray.fit(da.array(array))
 
     s_array_T_T = sarray.T.T
@@ -239,7 +237,7 @@ def test_array_tranpose_tranpose():
 def test_array_id():
     array = da.array(np.random.rand(10, 7))
     x = da.array(np.random.rand(10,5))
-    sarray = ScaledArray(scale=True, center=True)
+    sarray = ScaledCenterArray(scale=True, center=True)
     sarray.fit(da.array(array), x=x)
     sarray_T = sarray.T
     assert id(sarray._array) == id(sarray_T._array)
@@ -251,7 +249,7 @@ def test_array_id():
 def test_array_shapes():
     N, K = 10, 7
     array = da.array(np.random.rand(N, K))
-    sarray = ScaledArray()
+    sarray = ScaledCenterArray()
     sarray.fit(array)
 
     assert sarray.shape == (N, K)
@@ -260,7 +258,7 @@ def test_array_shapes():
 
 def test_bad_array():
     array = da.array(np.random.rand(3, 3, 3))
-    sarray = ScaledArray()
+    sarray = ScaledCenterArray()
     with pytest.raises(ValueError):
         sarray.fit(array)
 
@@ -268,14 +266,14 @@ def test_bad_array():
 def test_bad_x():
     array = da.array(np.random.rand(3, 3))
     x = da.array(np.random.rand(3,3,3))
-    sarray = ScaledArray()
+    sarray = ScaledCenterArray()
     with pytest.raises(ValueError):
         sarray.fit(array, x)
 
 
 def test__getitem__base_array_case1():
     array = da.array(np.random.rand(3, 3))
-    sarray = ScaledArray()
+    sarray = ScaledCenterArray()
     sarray.fit(array)
     np.testing.assert_array_equal(sarray[:, :]._array, sarray._array)
 
@@ -287,7 +285,7 @@ def test_ScaledArray_array():
             std = np.diag(1 / np.std(array, axis=0))
             mu = np.mean(array, axis=0)
 
-            sarray = ScaledArray(scale=False, center=False)
+            sarray = ScaledCenterArray(scale=False, center=False)
             sarray.fit(da.array(array))
             np.testing.assert_array_almost_equal(array, sarray.array)
             np.testing.assert_array_almost_equal(array.T, sarray.T.array)
@@ -295,7 +293,7 @@ def test_ScaledArray_array():
             # With Scale but No Center
             # B = AD
             b_array = array.dot(std)
-            sarray = ScaledArray(scale=True, center=False)
+            sarray = ScaledCenterArray(scale=True, center=False)
             sarray.fit(da.array(array))
             np.testing.assert_array_almost_equal(b_array, sarray.array)
             np.testing.assert_array_almost_equal(b_array.T, sarray.T.array)
@@ -303,7 +301,7 @@ def test_ScaledArray_array():
             # With Center but No Scale:
             # B = (A - U)
             b_array = array - mu
-            sarray = ScaledArray(scale=False, center=True)
+            sarray = ScaledCenterArray(scale=False, center=True)
             sarray.fit(da.array(array))
             np.testing.assert_array_almost_equal(b_array, sarray.array)
             np.testing.assert_array_almost_equal(b_array.T, sarray.T.array)
@@ -311,7 +309,7 @@ def test_ScaledArray_array():
             # With Center and  Scale:
             # (A - U)'D'D(A - U)x
             b_array = (array - mu).dot(std)
-            sarray = ScaledArray(scale=True, center=True)
+            sarray = ScaledCenterArray(scale=True, center=True)
             sarray.fit(da.array(array))
             np.testing.assert_array_almost_equal(b_array, sarray.array)
             np.testing.assert_array_almost_equal(b_array.T, sarray.T.array)
@@ -334,7 +332,7 @@ def test__getitem__mult_case():
                             # With No Scale or Center
                             # x = A'Ax
                             result = sub_array.dot(x)
-                            sarray = ScaledArray(scale=False, center=False)
+                            sarray = ScaledCenterArray(scale=False, center=False)
                             sarray.fit(da.array(array), x=fit_x)
                             np.testing.assert_array_almost_equal(result, sarray[0:sub_N, :].dot(x))
 
@@ -342,7 +340,7 @@ def test__getitem__mult_case():
                             # B = AD
                             b_array = sub_array.dot(std)
                             result = b_array.dot(x)
-                            sarray = ScaledArray(scale=True, center=False)
+                            sarray = ScaledCenterArray(scale=True, center=False)
                             sarray.fit(da.array(array), x=fit_x)
                             np.testing.assert_array_almost_equal(result, sarray[0:sub_N, :].dot(x))
 
@@ -350,7 +348,7 @@ def test__getitem__mult_case():
                             # B = (A - U)
                             b_array = sub_array - mu
                             result = b_array.dot(x)
-                            sarray = ScaledArray(scale=False, center=True)
+                            sarray = ScaledCenterArray(scale=False, center=True)
                             sarray.fit(da.array(array), x=fit_x)
                             np.testing.assert_array_almost_equal(result, sarray[0:sub_N, :].dot(x))
 
@@ -358,7 +356,7 @@ def test__getitem__mult_case():
                             # (A - U)'D'D(A - U)x
                             b_array = (sub_array - mu).dot(std)
                             result = b_array.dot(x)
-                            sarray = ScaledArray(scale=True, center=True)
+                            sarray = ScaledCenterArray(scale=True, center=True)
                             sarray.fit(da.array(array), x=fit_x)
                             np.testing.assert_array_almost_equal(result, sarray[0:sub_N, :].dot(x))
 
@@ -367,7 +365,7 @@ def test__getitem__base_array_case2():
     for N in range(2, 5):
         for P in range(2, 5):
             array = da.array(np.random.rand(N , P))
-            sarray = ScaledArray()
+            sarray = ScaledCenterArray()
             sarray.fit(array)
             for i in range(2, N):
                 for j in range(2, P):
@@ -378,7 +376,7 @@ def test__getitem_scaled_array_shape():
     for N in range(2, 5):
         for P in range(2, 5):
             array = da.array(np.random.rand(N, P))
-            sarray = ScaledArray()
+            sarray = ScaledCenterArray()
             sarray.fit(array)
             for i in range(2, N):
                 for j in range(2, P):
@@ -392,7 +390,7 @@ def test__getitem_scaled_array_shape():
 
 def test__getitem_T_subset_array():
     a = da.random.random(size=(100, 200))
-    sa = ScaledArray()
+    sa = ScaledCenterArray()
     sa.fit(a)
 
     np.testing.assert_array_equal(sa.T[0:10, :].shape, a.T[0:10, :].shape)
@@ -408,7 +406,7 @@ def test__getitem_T_subset_array():
 
 def test__getitem_T_subset_chunks():
     a = da.random.random(size=(100, 200))
-    sa = ScaledArray()
+    sa = ScaledCenterArray()
     sa.fit(a)
 
     np.testing.assert_array_equal(sa.T[0:10, :].chunks, a.T[0:10, :].chunks)
@@ -425,12 +423,12 @@ def test__getitem_T_subset_chunks():
 def test_ScaledArray_std_method():
     for method in [None, 'normal']:
         array = np.random.randint(0, 3, size=(10, 20))
-        sa = ScaledArray(std_dist=method)
+        sa = ScaledCenterArray(std_dist=method)
         sa.fit(array)
 
         np.testing.assert_almost_equal(sa.scale_vector, 1/array.std(axis=0))
 
-    sa = ScaledArray(std_dist='binom')
+    sa = ScaledCenterArray(std_dist='binom')
     sa.fit(array)
     p = array.mean(axis=0) / 2
     np.testing.assert_almost_equal(sa.scale_vector, 1/np.sqrt(2*p*(1-p)))
@@ -441,10 +439,10 @@ def test_ScaledArray_fromArrayMoment_moments():
     N2 = 5
     array1 = da.random.random(size=(N1, P)).persist()
     array2 = da.random.random(size=(N2, P)).persist()
-    sa1 = ScaledArray(scale=True, center=True, factor='n')
+    sa1 = ScaledCenterArray(scale=True, center=True, factor='n')
     sa1.fit(array1)
 
-    sa2 = ScaledArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
+    sa2 = ScaledCenterArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
 
     np.testing.assert_array_equal(sa2.center_vector, sa1.center_vector)
     np.testing.assert_array_equal(sa2.scale_vector, sa1.scale_vector)
@@ -462,11 +460,11 @@ def test_ScaledArray_fromArrayMoment_array():
     for scale in [True, False]:
         for center in [True, False]:
             for factor1 in [None, 'n', 'p']:
-                sa1 = ScaledArray(scale=scale, center=center, factor=factor1)
+                sa1 = ScaledCenterArray(scale=scale, center=center, factor=factor1)
                 sa1.fit(array1)
 
                 for factor2, factor_value in zip([None, 'n', 'p'], [1, N2, P]):
-                    sa2 = ScaledArray.fromScaledArray(array=array2, scaled_array=sa1, factor=factor2)
+                    sa2 = ScaledCenterArray.fromScaledArray(array=array2, scaled_array=sa1, factor=factor2)
                     sa2_array = array2
 
                     if center:
@@ -482,19 +480,19 @@ def test_ScaledArray_fromArrayMoment_bad_array():
     N2, P2 = 7, 9
     array1 = da.random.random(size=(N1, P1)).persist()
     array2 = da.random.random(size=(N2, P2)).persist()
-    sa1 = ScaledArray(scale=True, center=True, factor='n')
+    sa1 = ScaledCenterArray(scale=True, center=True, factor='n')
     sa1.fit(array1)
 
     with pytest.raises(ValueError):
-        ScaledArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
+        ScaledCenterArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
 
 
 def test_ScaledArray_fromArrayMoment_not_fit_array():
     N1, P1 = 7, 10
     array2 = da.random.random(size=(N1, P1)).persist()
-    sa1 = ScaledArray(scale=True, center=True, factor='n')
+    sa1 = ScaledCenterArray(scale=True, center=True, factor='n')
     with pytest.raises(AttributeError):
-        ScaledArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
+        ScaledCenterArray.fromScaledArray(array=array2, scaled_array=sa1, factor='n')
 
 
 def test_array_moment_std_method():
