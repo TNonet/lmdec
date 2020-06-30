@@ -4,7 +4,7 @@ import numpy as np
 import dask
 import dask.array as da
 
-from lmdec.array.matrix_ops import vector_to_sparse
+from lmdec.array.matrix_ops import vector_to_sparse, diag_dot
 from lmdec.array.reduce import tree_reduction, linear_reduction
 
 
@@ -172,10 +172,8 @@ class ChainedArray(dask.array.core.Array):
             if array.ndim == 2:
                 x = array.dot(x)
             elif array.ndim == 1:
-                if x.ndim == 2:
-                    array = da.tile(array, (x.shape[1], 1)).T
-                x = array * x
-        return x.rechunk('auto')
+                x = diag_dot(array, x)
+        return x
 
     def get_subarray(self, item) -> da.core.Array:
         return self._arrays[item]
