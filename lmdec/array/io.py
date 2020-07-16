@@ -10,6 +10,7 @@ from pandas_plink import read_plink, read_plink1_bin
 
 from lmdec.array.chained import ChainedArray
 from lmdec.array.stacked import StackedArray
+from lmdec.array.utils import issparse
 
 
 def load_plink_array(path_to_plink_files: Optional[Union[str, Path]] = None,
@@ -74,35 +75,6 @@ def load_plink_array(path_to_plink_files: Optional[Union[str, Path]] = None,
 
 def save_and_load_array(array, file: Optional[str] = None):
     pass
-
-
-
-def issparse(array: da.core.Array) -> bool:
-    """ Tests to see if the underlying array type of a Dask Array is sparse.COO
-
-    Parameters
-    ----------
-    array : array_like
-
-    Returns
-    -------
-    issparse : bool
-        Flag whether array.compute() would be a sparse array
-
-    Notes
-    -----
-    Roughly equivalent to type(array.compute()) == parse._coo.core.COO
-
-    """
-    sparse_type = sparse._coo.core.COO
-    try:
-        meta = array._meta
-    except ZeroDivisionError:
-        meta = sparse_type
-
-    if isinstance(meta, sparse_type):
-        return True
-    return False
 
 
 def sort_files_by_int(x: Iterable[str]) -> List[str]:

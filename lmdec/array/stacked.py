@@ -1,4 +1,4 @@
-from typing import Union, Iterable, Generator
+from typing import Union, Iterable, List
 
 import numpy as np
 import dask
@@ -7,6 +7,7 @@ import dask.array as da
 
 from lmdec.array.matrix_ops import expand_arrays
 from lmdec.array.reduce import tree_reduction, linear_reduction
+from lmdec.array.utils import issparse
 
 
 class StackedArray(dask.array.core.Array):
@@ -145,8 +146,8 @@ class StackedArray(dask.array.core.Array):
         return self
 
     @property
-    def arrays(self) -> Generator[da.core.Array, None, None]:
-        yield from self._arrays
+    def arrays(self) -> List[da.core.Array]:
+        return self._arrays
 
     @property
     def T(self) -> "StackedArray":
@@ -272,6 +273,8 @@ class StackedArray(dask.array.core.Array):
         arrays = []
         for array in self.arrays:
             if array.ndim == 1 or max(array.shape) == np.product(array.shape):
+                arrays.append(array)
+            elif issparse(array):
                 arrays.append(array)
             else:
                 arrays.append(array.rechunk(chunks, threshold, block_size_limit))

@@ -66,13 +66,16 @@ def test_mask_imputation(shape, axis, clip_value):
     else:
         values = da.ones(p)
 
-    filled_arr, mask_arr = utils.mask_imputation(arr, mask_values=values, mask_axis=axis)
+    try:
+        filled_arr, mask_arr = utils.mask_imputation(arr, mask_values=values, mask_axis=axis)
+    except ValueError:
+        assert np.count_nonzero(np.isnan(arr)) == 0
+    else:
+        assume(mask_arr.compute().data.size > 0)
 
-    assume(mask_arr.compute().data.size > 0)
+        combined_arr = StackedArray((filled_arr, mask_arr))
 
-    combined_arr = StackedArray((filled_arr, mask_arr))
-
-    np.testing.assert_array_equal(arr_result, combined_arr.array)
+        np.testing.assert_array_equal(arr_result, combined_arr.array)
 
 
 @given(npst.array_shapes(min_dims=2, max_dims=2), floats(0, 1))

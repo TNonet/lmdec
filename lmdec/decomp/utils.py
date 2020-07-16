@@ -179,6 +179,8 @@ def mask_imputation(array: da.core.Array, mask_values: Optional[da.core.Array] =
             pass
 
     coords = compute(*da.where(da.isnan(array)))
+    if not len(coords[0]):
+        raise ValueError('expected array to have maskable values, but got none.')
 
     data = axis_wise_COO_data_by_axis(mask_values, coords, axis=1 - mask_axis)
 
@@ -256,11 +258,16 @@ def make_snp_array(array: da.core.Array, mean: bool = True, std: bool = True, st
     """
     mean_array, std_array = get_array_moments(array, mean=mean, std=std, std_method=std_method, axis=0)
 
+    mask_valid = False
     if mask_nan:
-        if mask_method == 'mean' and mean:
-            array, mask_array = mask_imputation(array, mean_array, fill_value=0, mask_axis=0)
-        else:
-            array, mask_array = mask_imputation(array, mask_method=mask_method, fill_value=0, mask_axis=0)
+        try:
+            if mask_method == 'mean' and mean:
+                array, mask_array = mask_imputation(array, mean_array, fill_value=0, mask_axis=0)
+            else:
+                array, mask_array = mask_imputation(array, mask_method=mask_method, fill_value=0, mask_axis=0)
+            mask_valid = True
+        except ValueError:
+            pass
 
     array = array.astype(dtype)
 
@@ -270,7 +277,7 @@ def make_snp_array(array: da.core.Array, mean: bool = True, std: bool = True, st
         else:
             array = array.rechunk(rechunk)
 
-    if mask_nan:
+    if mask_nan and mask_valid:
         array = StackedArray((array, mask_array))
 
     if mean:

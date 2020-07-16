@@ -1,9 +1,10 @@
-from typing import Iterable, Generator, Union
+from typing import Iterable, Union, List
 
 import numpy as np
 import dask
 import dask.array as da
 
+from lmdec.array.utils import issparse
 from lmdec.array.matrix_ops import vector_to_sparse, diag_dot
 from lmdec.array.reduce import tree_reduction, linear_reduction
 
@@ -152,8 +153,8 @@ class ChainedArray(dask.array.core.Array):
         return self
 
     @property
-    def arrays(self) -> Generator[da.core.Array, None, None]:
-        yield from self._arrays
+    def arrays(self) -> List[da.core.Array]:
+        return self._arrays
 
     @property
     def T(self) -> "ChainedArray":
@@ -257,6 +258,8 @@ class ChainedArray(dask.array.core.Array):
         arrays = []
         for array in self.arrays:
             if array.ndim == 1 or max(array.shape) == np.product(array.shape):
+                arrays.append(array)
+            elif issparse(array):
                 arrays.append(array)
             else:
                 arrays.append(array.rechunk(chunks, threshold, block_size_limit))
